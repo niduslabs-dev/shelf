@@ -91,14 +91,14 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           for _ in $(seq 12); do
-            live=$(curl --silent --show-error --fail --max-time 10 \
-              --doh-url https://cloudflare-dns.com/dns-query \
-              "https://shelf.niduslabs.dev/index.json?build=${SHA:0:12}" 2>&1) || true
-            if [ "$live" = "$(cat _site/index.json)" ]; then
+            code=$(curl --silent --max-time 10 --doh-url https://cloudflare-dns.com/dns-query \
+              --dump-header headers.txt --output live.json --write-out '%{http_code}' \
+              "https://shelf.niduslabs.dev/index.json?build=${SHA:0:12}" || true)
+            if [ "$code" = 200 ] && cmp -s live.json _site/index.json; then
               echo "shelf.niduslabs.dev serves this build"
               exit 0
             fi
-            echo "Waiting: ${live:0:200}"
+            echo "Waiting: HTTP $code $(grep -i -E '^(server|cf-mitigated|cf-ray|content-type):' headers.txt 2>/dev/null | tr -d '\r' | tr '\n' ' ')"
             sleep 10
           done
           echo "::error::shelf.niduslabs.dev doesn't serve this build's index.json"
