@@ -1,7 +1,7 @@
 name: Report a problem with an extension
 description: Something wrong with a listed extension, other than a security issue.
-title: "Problem with "
-labels: ["report"]
+title: 'Problem with '
+labels: ['report']
 body:
   - type: markdown
     attributes:

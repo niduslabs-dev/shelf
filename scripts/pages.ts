@@ -7,7 +7,7 @@
 import type { Manifest } from './manifest.ts';
 import { HIGH_REACH, REACH_LABELS, grants, reachLevel } from './reach.ts';
 import type { ReachLevel, TrailChange } from './reach.ts';
-import { REGISTRY_REPO } from './registry.ts';
+import { REGISTRY_ORIGIN, REGISTRY_REPO } from './registry.ts';
 
 /** Escapes text for HTML element content and quoted attribute values. */
 export function escapeHtml(value: string): string {
@@ -283,7 +283,7 @@ export function extensionPage(data: ExtensionPageData): string {
   const version = escapeHtml(data.version);
   const description = manifestDescription(data.manifest);
   const listed = data.trail.at(-1);
-  const report = `${SOURCE_REPO}/issues/new?title=${encodeURIComponent(`Problem with ${data.id}`)}`;
+  const report = `${SOURCE_REPO}/issues/new?template=report-a-problem.yml&title=${encodeURIComponent(`Problem with ${data.id}`)}&extension=${encodeURIComponent(`${REGISTRY_ORIGIN}/e/${data.id}`)}`;
   return `${head(`${name} on Shelf`)}
 <a class="skip" href="#main">Skip to the extension</a>
 ${BAR}
