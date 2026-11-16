@@ -1,0 +1,47 @@
+# Checks listing and release pull requests (plans/shelf.md, "Checks on every
+# PR") and posts the results as one comment, updated on each push.
+#
+# Security: this runs under `pull_request_target`, so it has a token that can
+# comment even on PRs from forks. It must never run anything from the PR:
+#   - it checks out `main` (the default for this event), never the PR's head;
+#   - it installs nothing: scripts/ uses `node:` modules only and Node runs the
+#     TypeScript directly;
+#   - the PR's files are read through the API as data, and PR fields reach the
+#     script through `env`, never by interpolating them into `run`.
+name: PR check
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'extensions/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check listing
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/pr-check.ts

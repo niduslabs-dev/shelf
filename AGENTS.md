@@ -13,10 +13,16 @@ scripts/
   zip.ts             strict zip reader: refuses names that would collide on disk (case, Unicode form), Zip64, encryption
   manifest.ts        reads manifest.json (strict JSON) and checks a release: MV3, version, higher than current, update_url
   permissions.ts     what a manifest can reach, the diff between releases, and the PR comment's Markdown
+  schema.ts          listing.json, release.json, blocklist.json and authors' shelf.json claim files
+  registry.ts        the registry's fixed URLs (update_url, stored .crx assets)
+  github.ts          the GitHub REST calls and the capped .crx download, over fetch
+  pr-check.ts        runs every PR check and renders the comment; pr-check.yml runs it
   *.test.ts          tests: Helium-packed files, Chromium's own test files, crafted broken files and archives
   testing/           test-only writers (CRX3 and zip) for broken files
   fixtures/          .crx files: helium-* packed by Helium 0.21.1.1, chromium-* from Chromium's components/test/data/crx_file
-.github/workflows/   ci.yml (typecheck, lint, format, test)
+.github/workflows/   ci.yml (typecheck, lint, format, test), pr-check.yml (listing and release PRs)
+blocklist.json       blocked extension IDs
+extensions/<id>/     listing.json and release.json per extension (none yet)
 ```
 
 ## Commands

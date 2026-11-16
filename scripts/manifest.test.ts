@@ -9,9 +9,9 @@ import {
   compareVersions,
   parseVersion,
   readManifest,
-  updateUrlFor,
 } from './manifest.ts';
 import type { Manifest } from './manifest.ts';
+import { updateUrlFor } from './registry.ts';
 import { writeZip } from './testing/write-zip.ts';
 import { ZipError, readFile } from './zip.ts';
 

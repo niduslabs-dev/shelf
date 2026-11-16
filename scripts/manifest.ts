@@ -3,10 +3,9 @@
  * release asks for (spec check 4). Problems are collected, not thrown, so a PR
  * comment can list all of them at once.
  */
+import { updateUrlFor } from './registry.ts';
 import { readFile } from './zip.ts';
 
-/** The registry's origin. Every listed extension's `update_url` is fixed to it forever. */
-export const REGISTRY_ORIGIN = 'https://shelf.niduslabs.dev';
 /** Real manifests are a few KB; this only stops a zip bomb. */
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const UTF8_BOM = '﻿';
@@ -22,10 +21,6 @@ export type Manifest = Record<string, unknown>;
 /** True for a plain JSON object (not null or an array). */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export function updateUrlFor(id: string): string {
-  return `${REGISTRY_ORIGIN}/updates/${id}.xml`;
 }
 
 /**
