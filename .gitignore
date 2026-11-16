@@ -3,3 +3,4 @@ node_modules/
 # Agent working files (research, checks).
 .claude/
 _site/
+.wrangler/
