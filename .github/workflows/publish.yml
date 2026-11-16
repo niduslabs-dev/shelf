@@ -83,14 +83,22 @@ jobs:
             exit 1
           fi
           pnpm exec wrangler deploy --tag "${SHA:0:12}"
-      # The new index.json must be the one answering (up to the 5-minute cache).
+      # The new index.json must be the one answering. DNS over HTTPS through
+      # Cloudflare: a runner's resolver may cache "no such domain" from before
+      # the custom domain existed. The query string skips any cached copy.
       - name: Check the live site
+        env:
+          SHA: ${{ github.sha }}
         run: |
-          for attempt in $(seq 12); do
-            if curl -sf https://shelf.niduslabs.dev/index.json | diff -q - _site/index.json >/dev/null; then
+          for _ in $(seq 12); do
+            live=$(curl --silent --show-error --fail --max-time 10 \
+              --doh-url https://cloudflare-dns.com/dns-query \
+              "https://shelf.niduslabs.dev/index.json?build=${SHA:0:12}" 2>&1) || true
+            if [ "$live" = "$(cat _site/index.json)" ]; then
               echo "shelf.niduslabs.dev serves this build"
               exit 0
             fi
+            echo "Waiting: ${live:0:200}"
             sleep 10
           done
           echo "::error::shelf.niduslabs.dev doesn't serve this build's index.json"
