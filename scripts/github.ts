@@ -2,6 +2,8 @@
  * The few GitHub REST calls the checks need, over `fetch`, plus a capped
  * download for `.crx` files. No SDK, so nothing outside `node:` runs in CI.
  */
+import { isRecord } from './manifest.ts';
+
 const API = 'https://api.github.com';
 const UPLOADS = 'https://uploads.github.com';
 const API_VERSION = '2022-11-28';
@@ -131,6 +133,47 @@ export class GitHub {
       }
       if (batch.length < PAGE_SIZE) return tags;
     }
+  }
+
+  /** When each published Release was published, by tag (drafts are left out). */
+  async releaseDates(repo: string): Promise<Map<string, string>> {
+    const dates = new Map<string, string>();
+    for (let page = 1; ; page++) {
+      // oxlint-disable-next-line no-await-in-loop
+      const batch = await this.#json(`/repos/${repo}/releases?per_page=${PAGE_SIZE}&page=${page}`);
+      if (!Array.isArray(batch)) throw new Error('Unexpected releases response');
+      for (const item of batch as unknown[]) {
+        if (!isRecord(item) || item.draft === true) continue;
+        if (typeof item.tag_name === 'string' && typeof item.published_at === 'string')
+          dates.set(item.tag_name, item.published_at);
+      }
+      if (batch.length < PAGE_SIZE) return dates;
+    }
+  }
+
+  /** The SHAs of the default branch's commits that touched `path`, newest first. */
+  async commitsFor(repo: string, path: string): Promise<string[]> {
+    const shas: string[] = [];
+    for (let page = 1; ; page++) {
+      // oxlint-disable-next-line no-await-in-loop
+      const batch = await this.#json(
+        `/repos/${repo}/commits?path=${encodeURIComponent(path)}&per_page=${PAGE_SIZE}&page=${page}`,
+      );
+      if (!Array.isArray(batch)) throw new Error('Unexpected commits response');
+      for (const item of batch as unknown[]) {
+        if (isRecord(item) && typeof item.sha === 'string') shas.push(item.sha);
+      }
+      if (batch.length < PAGE_SIZE) return shas;
+    }
+  }
+
+  /** The pull request a commit on the default branch came from, preferring a merged one. */
+  async pullForCommit(repo: string, sha: string): Promise<number | undefined> {
+    const pulls = await this.#json(`/repos/${repo}/commits/${encodeURIComponent(sha)}/pulls`);
+    if (!Array.isArray(pulls)) throw new Error('Unexpected commit pulls response');
+    const found = (pulls as unknown[]).filter(isRecord);
+    const pull = found.find((item) => typeof item.merged_at === 'string') ?? found[0];
+    return typeof pull?.number === 'number' ? pull.number : undefined;
   }
 
   /** True when the repo has a published Release with this tag (drafts don't count). */

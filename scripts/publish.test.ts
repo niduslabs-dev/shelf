@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { extensionId } from './crx3.ts';
-import { publish, readExtensions, releaseTag } from './publish.ts';
+import { publish, readExtensions, releaseTag, storedVersions, versionCommits } from './publish.ts';
 import type { ListedExtension, PublishTarget } from './publish.ts';
 import { approvedCrxUrl, updateUrlFor } from './registry.ts';
 import type { RegistryLists } from './standing.ts';
@@ -19,7 +19,13 @@ const signer: Signer = { algorithm: 'rsa', ...generateKeyPairSync('rsa', { modul
 const ID = extensionId(spki(signer.publicKey));
 const SOURCE = 'https://github.com/alice/example/releases/download/v1.0/example.crx';
 
-function crx(version: string, extra: Record<string, unknown> = {}): Buffer {
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7]);
+
+function crx(
+  version: string,
+  extra: Record<string, unknown> = {},
+  files: { name: string; content: Buffer }[] = [],
+): Buffer {
   const manifest = {
     manifest_version: 3,
     name: 'Example',
@@ -28,7 +34,7 @@ function crx(version: string, extra: Record<string, unknown> = {}): Buffer {
     ...extra,
   };
   return packCrx3({
-    archive: writeZip([{ name: 'manifest.json', content: JSON.stringify(manifest) }]),
+    archive: writeZip([{ name: 'manifest.json', content: JSON.stringify(manifest) }, ...files]),
     signers: [signer],
   });
 }
@@ -52,14 +58,30 @@ interface FakeTarget extends PublishTarget {
 
 const none: RegistryLists = { blocklist: [], delisted: [] };
 
+const NOW = '2026-11-16T12:00:00Z';
+
 function fakeTarget(
   downloads: Record<string, Buffer>,
   existing: Record<string, Buffer> = {},
   tags: string[] = Object.keys(existing),
+  history: {
+    dates?: Record<string, string>;
+    releaseJson?: { sha: string; text: string | undefined }[];
+    pulls?: Record<string, number>;
+  } = {},
 ): FakeTarget {
   const created = new Map<string, Buffer>();
   return {
     created,
+    releaseDates: async () =>
+      new Map(
+        [...Object.keys(existing), ...created.keys()].map((tag) => [
+          tag,
+          history.dates?.[tag] ?? NOW,
+        ]),
+      ),
+    releaseJsonHistory: async () => history.releaseJson ?? [],
+    pullForCommit: async (sha) => history.pulls?.[sha],
     releaseTags: async () => tags,
     hasRelease: async (tag) => tag in existing || created.has(tag),
     download: async (url) => {
@@ -119,7 +141,7 @@ describe('publish', () => {
       { blocklist: [{ id: ID, reason: 'x', date: '2026-11-16' }], delisted: [] },
       target,
     );
-    assert.deepEqual(result, { entries: [], stored: [], problems: [] });
+    assert.deepEqual(result, { entries: [], stored: [], problems: [], warnings: [] });
   });
 
   it('stops when a stored ID would lose its update file', async () => {
@@ -168,6 +190,118 @@ describe('publish', () => {
 
   it('reports a failed download without throwing', async () => {
     assert.match((await publish([listed()], none, fakeTarget({}))).problems.join(), /HTTP 404/);
+  });
+});
+
+describe('store page data', () => {
+  it('gathers the size, the icon and a one-row trail for a new listing', async () => {
+    const withIcon = crx('1.0', { icons: { '128': 'icon.png' } }, [
+      { name: 'icon.png', content: PNG },
+    ]);
+    const result = await publish([listed(withIcon)], none, fakeTarget({ [SOURCE]: withIcon }));
+    assert.deepEqual(result.problems, []);
+    assert.deepEqual(result.warnings, []);
+    const details = result.entries[0]?.details;
+    assert.ok(details);
+    assert.equal(details.size, withIcon.length);
+    assert.deepEqual(details.icon, PNG);
+    assert.deepEqual(details.trail, [
+      { version: '1.0', date: NOW, change: { text: 'Listed', adds: false } },
+    ]);
+  });
+
+  it('builds the trail from every stored release, diffing each with the one before', async () => {
+    const v2 = crx('2.0', { permissions: ['tabs'] });
+    const v3 = crx('3.0', { permissions: ['tabs'] });
+    const current: ListedExtension = {
+      id: ID,
+      listing,
+      release: { version: '3.0', crx: SOURCE, sha256: sha256Hex(v3) },
+    };
+    const target = fakeTarget(
+      {},
+      { [releaseTag(ID, '1.0')]: v1, [releaseTag(ID, '2.0')]: v2, [releaseTag(ID, '3.0')]: v3 },
+      undefined,
+      {
+        dates: {
+          [releaseTag(ID, '1.0')]: '2026-10-10T00:00:00Z',
+          [releaseTag(ID, '2.0')]: '2026-11-02T00:00:00Z',
+          [releaseTag(ID, '3.0')]: '2026-11-12T00:00:00Z',
+        },
+        releaseJson: [
+          { sha: 'c3', text: JSON.stringify({ version: '3.0' }) },
+          { sha: 'c2b', text: JSON.stringify({ version: '2.0', crx: 'fixed' }) },
+          { sha: 'c2', text: JSON.stringify({ version: '2.0' }) },
+          { sha: 'c1', text: JSON.stringify({ version: '1.0' }) },
+        ],
+        pulls: { c3: 14, c2: 11 },
+      },
+    );
+    const result = await publish([current], none, target);
+    assert.deepEqual(result.problems, []);
+    assert.deepEqual(result.warnings, []);
+    assert.deepEqual(result.entries[0]?.details.trail, [
+      {
+        version: '3.0',
+        date: '2026-11-12T00:00:00Z',
+        change: { text: 'No permission changes', adds: false },
+        review: 14,
+      },
+      {
+        version: '2.0',
+        date: '2026-11-02T00:00:00Z',
+        change: { text: 'Added: tabs', adds: true },
+        review: 11,
+      },
+      { version: '1.0', date: '2026-10-10T00:00:00Z', change: { text: 'Listed', adds: false } },
+    ]);
+  });
+
+  it('warns, without stopping, when an older release cannot be read', async () => {
+    const v2 = crx('2.0');
+    const current: ListedExtension = {
+      id: ID,
+      listing,
+      release: { version: '2.0', crx: SOURCE, sha256: sha256Hex(v2) },
+    };
+    const target = fakeTarget({}, { [releaseTag(ID, '2.0')]: v2 }, undefined);
+    const dates = await target.releaseDates();
+    target.releaseDates = async () => new Map([...dates, [releaseTag(ID, '1.0'), NOW]]);
+    const result = await publish([current], none, target);
+    assert.deepEqual(result.problems, []);
+    assert.match(result.warnings.join(), /1\.0 manifest: HTTP 404/);
+    assert.deepEqual(result.entries[0]?.details.trail[0]?.change, {
+      text: 'Permission change unknown',
+      adds: false,
+    });
+  });
+});
+
+describe('storedVersions', () => {
+  it("lists one ID's stored versions, newest first", () => {
+    const other = 'b'.repeat(32);
+    assert.deepEqual(
+      storedVersions(ID, [`${ID}-1.10`, `${ID}-1.9`, `${other}-5.0`, `${ID}-2.0`, `${ID}-bad`]),
+      ['2.0', '1.10', '1.9'],
+    );
+  });
+});
+
+describe('versionCommits', () => {
+  it('maps each version to the commit that first set it', () => {
+    assert.deepEqual(
+      versionCommits([
+        { sha: 'c', text: '{"version":"2.0","crx":"x"}' },
+        { sha: 'b', text: '{"version":"2.0"}' },
+        { sha: 'x', text: 'not json' },
+        { sha: 'y', text: undefined },
+        { sha: 'a', text: '{"version":"1.0"}' },
+      ]),
+      new Map([
+        ['1.0', 'a'],
+        ['2.0', 'b'],
+      ]),
+    );
   });
 });
 

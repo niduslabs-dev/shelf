@@ -1,9 +1,10 @@
 # On each push to main that touches listings, the blocklist or the scripts:
 # stores every approved .crx that isn't stored yet on the registry's Release
 # `<id>-<version>` (re-verifying it against release.json first), builds the
-# site (updates/<id>.xml, index.json, blocked.json) and deploys it to GitHub
-# Pages. Re-running is safe: stored releases are compared, never replaced, and
-# any problem stops the run before the deploy, leaving the live site as it was.
+# site (the store pages, updates/<id>.xml, index.json, blocked.json) and
+# deploys it to the shelf Worker. Re-running is safe: stored releases are
+# compared, never replaced, and any problem stops the run before the deploy,
+# leaving the live site as it was.
 name: Publish
 
 on:
@@ -14,6 +15,7 @@ on:
       - 'blocklist.json'
       - 'delisted.json'
       - 'scripts/**'
+      - 'site/**'
       - '.github/workflows/publish.yml'
   workflow_dispatch:
 
@@ -31,6 +33,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      # The review trail links each release to the pull request that approved it.
+      pull-requests: read
     steps:
       - uses: actions/checkout@v7
         with:
