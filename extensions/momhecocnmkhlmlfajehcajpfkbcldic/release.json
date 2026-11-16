@@ -1,5 +1,5 @@
 {
-  "version": "1.0",
-  "crx": "https://github.com/niduslabs-dev/shelf-test-extension/releases/download/v1.0/shelf-test-extension-1.0.crx",
-  "sha256": "c941d56d28760d169fa9e0be520b9f06aca40e59b62231cfb8db3eb888b0e37e"
+  "version": "1.1",
+  "crx": "https://github.com/niduslabs-dev/shelf-test-extension/releases/download/v1.1/shelf-test-extension-1.1.crx",
+  "sha256": "6f0afcceb85df0aa5a2dc9b88f5cc19a761d0da4554b0ccc95a7dde6f4ba9d5f"
 }
