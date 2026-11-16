@@ -79,12 +79,15 @@ function head(title: string): string {
 <meta name="theme-color" content="#ffffff">
 <title>${title}</title>
 <link rel="preload" href="/fonts/manrope-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/shelf.css">
 </head>
 <body>`;
 }
 
-const LOGO = `<svg aria-hidden="true" width="28" height="28" viewBox="0 0 28 28"><rect width="28" height="28" rx="8" fill="#17161C"/><rect x="7" y="8" width="3.5" height="10" rx="1" fill="#F6F6F8"/><rect x="12.25" y="6" width="3.5" height="12" rx="1" fill="#F6F6F8"/><rect x="17.5" y="9.5" width="3.5" height="8.5" rx="1" fill="#8DBB82" transform="rotate(-14 19.25 13.75)"/><rect x="6" y="19.5" width="16" height="2" rx="1" fill="#F6F6F8"/></svg>`;
+const LOGO = `<svg aria-hidden="true" width="28" height="28" viewBox="0 0 28 28"><rect width="28" height="28" rx="8" fill="#17161C"/><rect x="7" y="8" width="3.5" height="10" rx="1" fill="#F6F6F8"/><rect x="12.25" y="6" width="3.5" height="12" rx="1" fill="#F6F6F8"/><rect x="18" y="9.5" width="3.5" height="8.5" rx="1" fill="#8DBB82" transform="rotate(-14 18 18)"/><rect x="6" y="19.5" width="16" height="2" rx="1" fill="#F6F6F8"/></svg>`;
 
 const BAR = `<header class="bar">
   <div class="wrap">

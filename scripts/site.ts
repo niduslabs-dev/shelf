@@ -115,8 +115,16 @@ const HEADERS = `/*
 const STATIC_DIR = join(import.meta.dirname, '..', 'site');
 const STATIC_ASSETS = ['shelf.css', 'shelf.js'];
 /** Manrope (SIL Open Font License, `site/fonts/OFL.txt`), Latin and Latin Extended. */
-const STATIC_BINARY = ['fonts/manrope-latin.woff2', 'fonts/manrope-latin-ext.woff2'];
-const STATIC_TEXT = ['fonts/OFL.txt'];
+const STATIC_BINARY = [
+  'fonts/manrope-latin.woff2',
+  'fonts/manrope-latin-ext.woff2',
+  'favicon.ico',
+  'apple-touch-icon.png',
+  'icon-192.png',
+  'icon-512.png',
+];
+/** Shelf's icons come from the brand repo (`assets/apps/shelf`, built by its `scripts/build.mjs`); copy them, never edit them here. */
+const STATIC_TEXT = ['fonts/OFL.txt', 'favicon.svg'];
 /** `YYYY-MM-DD`, the date part of an ISO timestamp. */
 const ISO_DATE_LENGTH = 10;
 

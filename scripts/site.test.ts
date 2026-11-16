@@ -156,6 +156,23 @@ describe('buildSite', () => {
     }
   });
 
+  it('ships the favicon and touch icon, and every page links them', () => {
+    for (const icon of ['favicon.ico', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png']) {
+      assert.ok(files.get(icon) instanceof Uint8Array, icon);
+    }
+    assert.match(text(files, 'favicon.svg'), /^<svg /);
+    for (const page of ['index.html', `e/${ID}/index.html`, '404.html']) {
+      assert.match(
+        text(files, page),
+        /<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml">/,
+      );
+      assert.match(
+        text(files, page),
+        /<link rel="apple-touch-icon" href="\/apple-touch-icon\.png">/,
+      );
+    }
+  });
+
   it('has a 404 page in the store’s look', () => {
     const page = text(files, '404.html');
     assert.match(page, /That page isn't on Shelf\./);
