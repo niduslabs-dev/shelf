@@ -13,7 +13,8 @@ scripts/
   zip.ts             strict zip reader: refuses names that would collide on disk (case, Unicode form), Zip64, encryption
   manifest.ts        reads manifest.json (strict JSON) and checks a release: MV3, version, higher than current, update_url
   permissions.ts     what a manifest can reach, the diff between releases, and the PR comment's Markdown
-  schema.ts          listing.json, release.json, blocklist.json and authors' shelf.json claim files
+  schema.ts          listing.json, release.json, blocklist.json, delisted.json and authors' shelf.json claim files
+  standing.ts        an ID's state: listed, blocked, removed or left
   registry.ts        the registry's fixed URLs (update_url, stored .crx assets)
   github.ts          the GitHub REST calls and the capped .crx download, over fetch
   verify-release.ts  the checks a downloaded .crx must pass against release.json (hash, signature, ID, manifest), shared by PR check and publish
@@ -25,7 +26,8 @@ scripts/
   fixtures/          .crx files: helium-* packed by Helium 0.21.1.1, chromium-* from Chromium's components/test/data/crx_file
 wrangler.jsonc       Worker `shelf`: serves _site/ at shelf.niduslabs.dev (custom domain; Wrangler made the DNS record)
 .github/workflows/   ci.yml (typecheck, lint, format, test), pr-check.yml (listing and release PRs), publish.yml (on main: store releases, build, deploy with Wrangler)
-blocklist.json       blocked extension IDs
+blocklist.json       blocked extension IDs (update file answers "no update")
+delisted.json        IDs no longer listed: `removed` ("no update") or `left` (its final release stays served)
 extensions/<id>/     listing.json and release.json per extension (none yet)
 ```
 
@@ -44,7 +46,8 @@ pnpm format         # oxfmt (format:check in CI)
 - **No runtime dependencies in the verification path.** `scripts/` uses `node:` modules only, so a compromised package can't approve a release. Dev tools are pinned exactly.
 - **Erasable TypeScript only** (`erasableSyntaxOnly`): Node runs the files directly, so no enums, namespaces or parameter properties.
 - **Security code changes need a test that fails without them.** When changing `crx3.ts`, compare with Chromium's `components/crx_file/crx_verifier.cc` and add a case.
-- **`update_url` is permanent.** Every listed extension has `https://shelf.niduslabs.dev/updates/<id>.xml` baked in. Never move or drop that path.
+- **`update_url` is permanent, so an update file never disappears.** Every ID that was ever listed answers forever: listed (latest), blocked or `removed` ("no update"), or `left` (its final release). To unlist, add a `removed` entry to delisted.json; never just delete `extensions/<id>/`. Publish stops if an ID with stored releases has none of these.
+- **Leaving:** a maintainer adds a `left` entry first; then the author's final release PR may move `update_url` to their own https URL, once. Keep `extensions/<id>/` with that final release.
 - **Stored releases are never replaced.** Publish only creates Release `<id>-<version>` or compares it with release.json's SHA-256. A mismatch stops the deploy; a maintainer investigates by hand.
 - **The index page is a placeholder.** Its design goes on a canvas first (ask Jatin which), never straight into code.
 - **Fixture keys stay out of git.** The `.pem` files that made `helium-*` fixtures live in the workspace's `.claude/research/` folders.

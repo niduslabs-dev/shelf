@@ -33,7 +33,7 @@ export function verifyRelease(
   bytes: Uint8Array,
   id: string,
   release: Release,
-  currentVersion?: string,
+  options: { currentVersion?: string; leaving?: boolean } = {},
 ): VerifiedRelease {
   const actual = sha256Hex(bytes);
   if (actual !== release.sha256) {
@@ -52,7 +52,7 @@ export function verifyRelease(
     throw error;
   }
   return {
-    problems: checkManifest(manifest, { id, version: release.version, currentVersion }),
+    problems: checkManifest(manifest, { id, version: release.version, ...options }),
     manifest,
   };
 }

@@ -78,6 +78,20 @@ export interface ReleaseExpectations {
   version: string;
   /** The version currently approved, if the extension is already listed. */
   currentVersion?: string;
+  /**
+   * The author's final release on the way out of the registry: `update_url`
+   * must then point somewhere else (https), instead of at the registry.
+   */
+  leaving?: boolean;
+}
+
+function isHttpsUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 /** Spec check 4. Returns every problem found; an empty list means the manifest passes. */
@@ -104,7 +118,13 @@ export function checkManifest(manifest: Manifest, expected: ReleaseExpectations)
   }
 
   const wanted = updateUrlFor(expected.id);
-  if (manifest.update_url !== wanted) {
+  if (expected.leaving) {
+    if (!isHttpsUrl(manifest.update_url) || manifest.update_url === wanted) {
+      problems.push(
+        `A final release must move update_url to the author's own https URL, found ${JSON.stringify(manifest.update_url)}`,
+      );
+    }
+  } else if (manifest.update_url !== wanted) {
     problems.push(`update_url must be ${wanted}, found ${JSON.stringify(manifest.update_url)}`);
   }
 

@@ -8,10 +8,13 @@ import type { Manifest } from './manifest.ts';
 import { readPermissions } from './permissions.ts';
 import type { Permissions } from './permissions.ts';
 import { approvedCrxUrl } from './registry.ts';
-import type { BlockedExtension, Listing, Release } from './schema.ts';
+import type { Listing, Release } from './schema.ts';
+import type { RegistryLists } from './standing.ts';
 
 export interface SiteEntry {
   id: string;
+  /** listed: in the index and updatable. left: its final release stays served, outside the index. */
+  standing: 'listed' | 'left';
   listing: Listing;
   release: Release;
   manifest: Manifest;
@@ -91,21 +94,24 @@ const HEADERS = `/*
 `;
 
 /**
- * Every file of the site, by path. Blocked extensions get a "no update"
- * answer, so no further version reaches anyone, and leave the index.
+ * Every file of the site, by path. Listed extensions are indexed and served.
+ * One that left keeps its final release served, so older copies can follow it
+ * out. Blocked and removed ones answer "no update". No ID that was ever listed
+ * is left without an update file.
  */
-export function buildSite(
-  entries: SiteEntry[],
-  blocklist: BlockedExtension[],
-): Map<string, string> {
+export function buildSite(entries: SiteEntry[], lists: RegistryLists): Map<string, string> {
   const files = new Map<string, string>();
-  const blocked = new Set(blocklist.map((entry) => entry.id));
   const index: IndexEntry[] = [];
-  for (const { id, listing, release, manifest } of entries.toSorted((a, b) =>
+  const silenced = new Set([
+    ...lists.blocklist.map((entry) => entry.id),
+    ...lists.delisted.filter((entry) => entry.kind === 'removed').map((entry) => entry.id),
+  ]);
+  for (const { id, standing, listing, release, manifest } of entries.toSorted((a, b) =>
     a.id.localeCompare(b.id),
   )) {
-    if (blocked.has(id)) continue;
+    if (silenced.has(id)) continue;
     files.set(`updates/${id}.xml`, updateXml(id, release));
+    if (standing !== 'listed') continue;
     index.push({
       id,
       name: listing.name,
@@ -118,9 +124,9 @@ export function buildSite(
       permissions: readPermissions(manifest),
     });
   }
-  for (const { id } of blocklist) files.set(`updates/${id}.xml`, updateXml(id, 'noupdate'));
+  for (const id of silenced) files.set(`updates/${id}.xml`, updateXml(id, 'noupdate'));
   files.set('index.json', `${JSON.stringify(index, null, 2)}\n`);
-  files.set('blocked.json', `${JSON.stringify(blocklist, null, 2)}\n`);
+  files.set('blocked.json', `${JSON.stringify(lists.blocklist, null, 2)}\n`);
   files.set('index.html', PLACEHOLDER_PAGE);
   files.set('_headers', HEADERS);
   return files;

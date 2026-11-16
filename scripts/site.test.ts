@@ -7,8 +7,11 @@ import type { IndexEntry, SiteEntry } from './site.ts';
 
 const ID = 'a'.repeat(32);
 const BLOCKED = 'b'.repeat(32);
-const entry = (id: string): SiteEntry => ({
+const LEFT = 'c'.repeat(32);
+const REMOVED = 'd'.repeat(32);
+const entry = (id: string, standing: SiteEntry['standing'] = 'listed'): SiteEntry => ({
   id,
+  standing,
   listing: {
     name: 'Example',
     summary: 'Does a thing.',
@@ -43,14 +46,22 @@ describe('updateXml', () => {
 });
 
 describe('buildSite', () => {
-  const files = buildSite(
-    [entry(ID), entry(BLOCKED)],
-    [{ id: BLOCKED, reason: 'Malware', date: '2026-11-16' }],
-  );
+  const files = buildSite([entry(ID), entry(BLOCKED), entry(LEFT, 'left')], {
+    blocklist: [{ id: BLOCKED, reason: 'Malware', date: '2026-11-16' }],
+    delisted: [
+      { id: LEFT, kind: 'left', reason: 'Moved', date: '2026-11-16' },
+      { id: REMOVED, kind: 'removed', reason: 'Asked', date: '2026-11-16' },
+    ],
+  });
 
   it('writes an update file for every listed and blocked extension', () => {
     assert.match(files.get(`updates/${ID}.xml`) ?? '', /version='1\.2'/);
     assert.match(files.get(`updates/${BLOCKED}.xml`) ?? '', /noupdate/);
+  });
+
+  it('keeps serving the final release of one that left, outside the index, and silences removed ones', () => {
+    assert.match(files.get(`updates/${LEFT}.xml`) ?? '', /version='1\.2'/);
+    assert.match(files.get(`updates/${REMOVED}.xml`) ?? '', /noupdate/);
   });
 
   it('keeps blocked extensions out of index.json and lists them in blocked.json', () => {

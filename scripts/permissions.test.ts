@@ -97,8 +97,14 @@ describe('permissionReport', () => {
   it('says so when nothing changed', () => {
     assert.match(
       permissionReport(v1, { ...v1, version: '1.1' }),
-      /No new permissions[\s\S]*unchanged/,
+      /^\*\*No permission changes\.\*\*$/,
     );
+  });
+
+  it('calls out fewer permissions', () => {
+    const report = permissionReport(v1, { ...v1, permissions: ['storage'] });
+    assert.match(report, /^\*\*Fewer permissions\.\*\*/);
+    assert.match(report, /removed: `tabs`/);
   });
 
   it('strips backticks so a permission string cannot break out of the Markdown', () => {

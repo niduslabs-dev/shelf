@@ -12,16 +12,19 @@ import { GitHub, download } from './github.ts';
 import type { PrFile } from './github.ts';
 import type { Manifest } from './manifest.ts';
 import { diffRelease, permissionReport } from './permissions.ts';
-import { approvedCrxUrl } from './registry.ts';
+import { approvedCrxUrl, updateUrlFor } from './registry.ts';
 import {
   ID_PATTERN,
   parseBlocklist,
+  parseDelisted,
   parseClaim,
   parseListing,
   parseRelease,
   parseRepoUrl,
 } from './schema.ts';
-import type { BlockedExtension, Listing } from './schema.ts';
+import type { Listing } from './schema.ts';
+import { standingOf } from './standing.ts';
+import type { RegistryLists } from './standing.ts';
 import { manifestOf, sha256Hex, verifyRelease } from './verify-release.ts';
 
 /** Finds this workflow's own comment on a PR. */
@@ -40,7 +43,7 @@ export interface PullRequestSource {
   /** `shelf.json` on the default branch of the extension's own repo. */
   readClaim(owner: string, repo: string): Promise<string | undefined>;
   download(url: string): Promise<Buffer>;
-  blocklist: BlockedExtension[];
+  lists: RegistryLists;
 }
 
 export interface CheckResult {
@@ -51,8 +54,12 @@ export interface CheckResult {
   notes: string[];
   /** The permission report in Markdown, once the `.crx` was read. */
   report: string | undefined;
-  /** True when the release adds permissions or is a new listing. */
+  /** True when the release adds permissions, is a new listing, or leaves the registry. */
   needsCloseReview: boolean;
+  /** The approved version (none for a new listing) and the requested one. */
+  versions: { from: string | undefined; to: string } | undefined;
+  /** Set for an author's final release: where update_url moves to. */
+  leavingTo: string | undefined;
 }
 
 function scope(files: PrFile[]): { id: string; names: Set<string> } | string {
@@ -88,6 +95,8 @@ export async function checkPullRequest(pr: PullRequestSource): Promise<CheckResu
     notes: [],
     report: undefined,
     needsCloseReview: true,
+    versions: undefined,
+    leavingTo: undefined,
   };
   const fail = (problem: string): CheckResult => {
     result.problems.push(problem);
@@ -101,8 +110,13 @@ export async function checkPullRequest(pr: PullRequestSource): Promise<CheckResu
   if (!ID_PATTERN.test(id))
     return fail(`The folder name ${id} is not an extension ID (32 letters a to p)`);
 
-  const blocked = pr.blocklist.find((entry) => entry.id === id);
+  const standing = standingOf(id, pr.lists);
+  const blocked = pr.lists.blocklist.find((entry) => entry.id === id);
+  const delisted = pr.lists.delisted.find((entry) => entry.id === id);
   if (blocked) return fail(`This extension is blocked (${blocked.date}): ${blocked.reason}`);
+  if (standing === 'removed' && delisted) {
+    return fail(`This extension was removed from Shelf (${delisted.date}): ${delisted.reason}`);
+  }
 
   const folder = `extensions/${id}`;
   const approvedListing = await pr.readMainFile(`${folder}/listing.json`);
@@ -167,14 +181,24 @@ export async function checkPullRequest(pr: PullRequestSource): Promise<CheckResu
     }
   }
 
-  const verified = verifyRelease(crxBytes, id, release.value, currentVersion);
+  const leaving = standing === 'left';
+  if (leaving) {
+    if (isNew) return fail('Only a listed extension can leave the registry');
+    if (previous === undefined) return result;
+    if (previous.update_url !== updateUrlFor(id)) {
+      return fail('This extension already shipped its final release; it has left the registry');
+    }
+  }
+  result.versions = { from: currentVersion, to: release.value.version };
+  const verified = verifyRelease(crxBytes, id, release.value, { currentVersion, leaving });
   result.problems.push(...verified.problems);
   const { manifest } = verified;
   if (manifest === undefined) return result;
   result.notes.push(`SHA-256 of the .crx: \`${sha256Hex(crxBytes)}\` (matches release.json)`);
+  if (leaving && typeof manifest.update_url === 'string') result.leavingTo = manifest.update_url;
   if (isNew || previous !== undefined) {
     result.report = permissionReport(previous, manifest);
-    result.needsCloseReview = isNew || diffRelease(previous, manifest).addsPermissions;
+    result.needsCloseReview = isNew || leaving || diffRelease(previous, manifest).addsPermissions;
   }
   return result;
 }
@@ -194,6 +218,19 @@ export function renderComment(result: CheckResult, listing?: Listing): string {
     '',
   );
   if (listing) lines.push(`**${safe(listing.name)}**: ${safe(listing.summary)}`, '');
+  if (result.versions) {
+    const { from, to } = result.versions;
+    lines.push(
+      from === undefined ? `Version ${safe(to)}` : `Version ${safe(from)} → ${safe(to)}`,
+      '',
+    );
+  }
+  if (result.leavingTo !== undefined) {
+    lines.push(
+      `**Final release.** It moves update_url to \`${safe(result.leavingTo)}\`. Shelf keeps serving this version's update file so older copies can follow, then lists the extension no more.`,
+      '',
+    );
+  }
   for (const problem of result.problems) lines.push(`- ${safe(problem)}`);
   if (result.problems.length > 0) lines.push('');
   for (const note of result.notes) lines.push(`- ${note}`);
@@ -202,7 +239,7 @@ export function renderComment(result: CheckResult, listing?: Listing): string {
     lines.push(
       '',
       result.needsCloseReview
-        ? 'A maintainer reviews this before merging (new listing or new permissions).'
+        ? 'A maintainer reviews this before merging (new listing, new permissions or a final release).'
         : 'A maintainer reviews this before merging.',
     );
   }
@@ -231,7 +268,12 @@ async function main(): Promise<void> {
     readMainFile: async (path) => github.fileText(repo, path, 'main'),
     readClaim: async (owner, name) => github.fileText(`${owner}/${name}`, 'shelf.json'),
     download,
-    blocklist: parseBlocklist(readFileSync(new URL('../blocklist.json', import.meta.url), 'utf8')),
+    lists: {
+      blocklist: parseBlocklist(
+        readFileSync(new URL('../blocklist.json', import.meta.url), 'utf8'),
+      ),
+      delisted: parseDelisted(readFileSync(new URL('../delisted.json', import.meta.url), 'utf8')),
+    },
   };
   const result = await checkPullRequest(source);
   const listingPath = result.id === undefined ? undefined : `extensions/${result.id}/listing.json`;

@@ -6,6 +6,7 @@ import { extensionId } from './crx3.ts';
 import { checkPullRequest, renderComment } from './pr-check.ts';
 import type { CheckResult, PullRequestSource } from './pr-check.ts';
 import { approvedCrxUrl, updateUrlFor } from './registry.ts';
+import type { DelistedExtension } from './schema.ts';
 import { packCrx3, spki } from './testing/pack-crx3.ts';
 import type { Signer } from './testing/pack-crx3.ts';
 import { writeZip } from './testing/write-zip.ts';
@@ -55,6 +56,7 @@ interface Fake {
   claim?: string;
   downloads?: Record<string, Buffer>;
   blocked?: string[];
+  delisted?: DelistedExtension[];
 }
 
 function fakePr(fake: Fake): PullRequestSource {
@@ -71,11 +73,14 @@ function fakePr(fake: Fake): PullRequestSource {
       if (!file) throw new Error('HTTP 404');
       return file;
     },
-    blocklist: (fake.blocked ?? []).map((id) => ({
-      id,
-      reason: 'Shipped malware',
-      date: '2026-11-16',
-    })),
+    lists: {
+      blocklist: (fake.blocked ?? []).map((id) => ({
+        id,
+        reason: 'Shipped malware',
+        date: '2026-11-16',
+      })),
+      delisted: fake.delisted ?? [],
+    },
   };
 }
 
@@ -131,7 +136,8 @@ describe('checkPullRequest', () => {
     assert.deepEqual(result.problems, []);
     assert.equal(result.kind, 'release');
     assert.equal(result.needsCloseReview, false);
-    assert.match(result.report ?? '', /No new permissions/);
+    assert.match(result.report ?? '', /No permission changes/);
+    assert.deepEqual(result.versions, { from: '1.0', to: '1.1' });
   });
 
   it('passes a release that adds permissions, marked for close review', async () => {
@@ -185,6 +191,47 @@ describe('checkPullRequest', () => {
     const fake = release('1.1', crx('1.1'));
     fake.downloads![crxUrl('v1.1')] = crx('1.1', { description: 'Swapped after review' });
     assert.match(await problems(fake), /SHA-256 is [0-9a-f]{64}, but release\.json says/);
+  });
+
+  it('refuses a removed extension', async () => {
+    const delisted: DelistedExtension[] = [
+      { id: ID, kind: 'removed', reason: 'Author asked', date: '2026-11-16' },
+    ];
+    assert.match(
+      await problems(release('1.1', crx('1.1'), { delisted })),
+      /removed from Shelf .*Author asked/,
+    );
+  });
+
+  it('accepts one final release that moves update_url away, once the maintainer marked it as leaving', async () => {
+    const delisted: DelistedExtension[] = [
+      { id: ID, kind: 'left', reason: 'Moving to own server', date: '2026-11-16' },
+    ];
+    const away = 'https://example.com/updates.xml';
+    const result = await checkPullRequest(
+      fakePr(release('2.0', crx('2.0', { update_url: away }), { delisted })),
+    );
+    assert.deepEqual(result.problems, []);
+    assert.equal(result.leavingTo, away);
+    assert.equal(result.needsCloseReview, true);
+    assert.match(renderComment(result), /Final release/);
+  });
+
+  it('refuses a final release that still points at the registry', async () => {
+    const delisted: DelistedExtension[] = [
+      { id: ID, kind: 'left', reason: 'x', date: '2026-11-16' },
+    ];
+    assert.match(
+      await problems(release('2.0', crx('2.0'), { delisted })),
+      /final release must move update_url/,
+    );
+  });
+
+  it('refuses moving update_url away without the maintainer marking it as leaving', async () => {
+    assert.match(
+      await problems(release('2.0', crx('2.0', { update_url: 'https://example.com/u.xml' }))),
+      /update_url must be https:\/\/shelf/,
+    );
   });
 
   it('refuses a blocked extension', async () => {
@@ -242,6 +289,8 @@ describe('renderComment', () => {
     notes: [],
     report: undefined,
     needsCloseReview: false,
+    versions: undefined,
+    leavingTo: undefined,
   };
 
   it('neutralises mentions, HTML and backticks from PR content', () => {
@@ -251,6 +300,17 @@ describe('renderComment', () => {
     );
     assert.doesNotMatch(body, /@everyone|@octocat|<img|<script>/);
     assert.match(body, /1 problem/);
+  });
+
+  it('shows the version change', () => {
+    assert.match(
+      renderComment({ ...base, versions: { from: '1.0', to: '1.1' } }),
+      /Version 1\.0 → 1\.1/,
+    );
+    assert.match(
+      renderComment({ ...base, versions: { from: undefined, to: '1.0' } }),
+      /Version 1\.0\n/,
+    );
   });
 
   it('carries the marker so the next run edits the same comment', () => {

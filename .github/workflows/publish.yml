@@ -12,6 +12,7 @@ on:
     paths:
       - 'extensions/**'
       - 'blocklist.json'
+      - 'delisted.json'
       - 'scripts/**'
       - '.github/workflows/publish.yml'
   workflow_dispatch:

@@ -38,6 +38,15 @@ export interface BlockedExtension {
   date: string;
 }
 
+/** An ID that is no longer listed. Its update file still answers, so installed copies never hit a 404. */
+export interface DelistedExtension {
+  id: string;
+  /** removed: answers "no update". left: keeps serving the author's final hand-off release. */
+  kind: 'removed' | 'left';
+  reason: string;
+  date: string;
+}
+
 export type Parsed<T> = { ok: true; value: T } | { ok: false; problems: string[] };
 
 export function isLogin(value: string): boolean {
@@ -203,5 +212,24 @@ export function parseBlocklist(source: string): BlockedExtension[] {
       throw new Error(`blocklist.json entry ${index} needs id, reason and date`);
     }
     return { id: item.id, reason: item.reason, date: item.date };
+  });
+}
+
+export function parseDelisted(source: string): DelistedExtension[] {
+  const value: unknown = JSON.parse(source);
+  if (!Array.isArray(value)) throw new Error('delisted.json must be an array');
+  return value.map((item, index) => {
+    if (
+      !isRecord(item) ||
+      typeof item.id !== 'string' ||
+      (item.kind !== 'removed' && item.kind !== 'left') ||
+      typeof item.reason !== 'string' ||
+      typeof item.date !== 'string'
+    ) {
+      throw new Error(
+        `delisted.json entry ${index} needs id, kind (removed or left), reason and date`,
+      );
+    }
+    return { id: item.id, kind: item.kind, reason: item.reason, date: item.date };
   });
 }

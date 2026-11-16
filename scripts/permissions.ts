@@ -112,8 +112,10 @@ export function permissionReport(previous: Manifest | undefined, next: Manifest)
   }
 
   const diff = diffRelease(previous, next);
-  lines.push(diff.addsPermissions ? '**Adds permissions.**' : '**No new permissions.**', '');
-  if (diff.permissions.length === 0) lines.push('- Permissions unchanged.');
+  if (diff.addsPermissions) lines.push('**Adds permissions.**');
+  else if (diff.permissions.length > 0) lines.push('**Fewer permissions.**');
+  else lines.push('**No permission changes.**');
+  if (diff.permissions.length > 0) lines.push('');
   for (const change of diff.permissions) {
     if (change.added.length > 0)
       lines.push(`- ${KIND_LABELS[change.kind]}, added: ${code(change.added)}`);

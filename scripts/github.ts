@@ -118,6 +118,21 @@ export class GitHub {
     });
     if (!response.ok) throw new Error(`Posting the comment failed: ${response.status}`);
   }
+  /** Every Release tag in the repo, drafts included. */
+  async releaseTags(repo: string): Promise<string[]> {
+    const tags: string[] = [];
+    for (let page = 1; ; page++) {
+      // oxlint-disable-next-line no-await-in-loop
+      const batch = await this.#json(`/repos/${repo}/releases?per_page=${PAGE_SIZE}&page=${page}`);
+      if (!Array.isArray(batch)) throw new Error('Unexpected releases response');
+      for (const item of batch as unknown[]) {
+        if (typeof item === 'object' && item !== null && 'tag_name' in item)
+          tags.push(String(item.tag_name));
+      }
+      if (batch.length < PAGE_SIZE) return tags;
+    }
+  }
+
   /** True when the repo has a published Release with this tag (drafts don't count). */
   async hasRelease(repo: string, tag: string): Promise<boolean> {
     const response = await this.#request(`/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`);
