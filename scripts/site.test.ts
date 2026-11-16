@@ -66,6 +66,13 @@ describe('buildSite', () => {
     assert.match(files.get('blocked.json') ?? '', /Malware/);
   });
 
+  it('caches update files for five minutes at most', () => {
+    assert.match(
+      files.get('_headers') ?? '',
+      /\/updates\/\*\n  Content-Type: application\/xml; charset=utf-8\n  Cache-Control: public, max-age=300/,
+    );
+  });
+
   it('has a page at the root', () => {
     assert.match(files.get('index.html') ?? '', /<title>Shelf<\/title>/);
   });

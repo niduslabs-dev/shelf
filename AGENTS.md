@@ -2,7 +2,7 @@
 
 > Part of the Nidus Labs workspace (`~/Work/personal/niduslabs`). Start with the workspace guide `../AGENTS.md` and `../STATUS.md`; this file covers this repo only. The design and what's decided are in `../plans/shelf.md`.
 
-A public registry of Chromium extensions for Helium and ungoogled-chromium users, at `shelf.niduslabs.dev` (GitHub Pages). Authors sign their own `.crx` files; the registry verifies them in CI, stores approved files on this repo's GitHub Releases and serves each extension's `updates.xml`. No servers.
+A public registry of Chromium extensions for Helium and ungoogled-chromium users, at `shelf.niduslabs.dev` (a static-assets Worker on Cloudflare). Authors sign their own `.crx` files; the registry verifies them in CI, stores approved files on this repo's GitHub Releases and serves each extension's `updates.xml`. No servers.
 
 ## Layout
 
@@ -18,12 +18,13 @@ scripts/
   github.ts          the GitHub REST calls and the capped .crx download, over fetch
   verify-release.ts  the checks a downloaded .crx must pass against release.json (hash, signature, ID, manifest), shared by PR check and publish
   pr-check.ts        runs every PR check and renders the comment; pr-check.yml runs it
-  publish.ts         stores approved .crx files on Releases `<id>-<version>` and builds the site; publish.yml runs it, then deploys Pages
-  site.ts            the site's files: updates/<id>.xml, index.json, blocked.json, a placeholder index.html
+  publish.ts         stores approved .crx files on Releases `<id>-<version>` and builds the site into _site/; publish.yml runs it, then deploys
+  site.ts            the site's files: updates/<id>.xml, index.json, blocked.json, _headers, a placeholder index.html
   *.test.ts          tests: Helium-packed files, Chromium's own test files, crafted broken files and archives
   testing/           test-only writers (CRX3 and zip) for broken files
   fixtures/          .crx files: helium-* packed by Helium 0.21.1.1, chromium-* from Chromium's components/test/data/crx_file
-.github/workflows/   ci.yml (typecheck, lint, format, test), pr-check.yml (listing and release PRs), publish.yml (on main: store releases, deploy Pages)
+wrangler.jsonc       Worker `shelf`: serves _site/ at shelf.niduslabs.dev (custom domain; Wrangler made the DNS record)
+.github/workflows/   ci.yml (typecheck, lint, format, test), pr-check.yml (listing and release PRs), publish.yml (on main: store releases, build, deploy with Wrangler)
 blocklist.json       blocked extension IDs
 extensions/<id>/     listing.json and release.json per extension (none yet)
 ```
@@ -47,4 +48,6 @@ pnpm format         # oxfmt (format:check in CI)
 - **Stored releases are never replaced.** Publish only creates Release `<id>-<version>` or compares it with release.json's SHA-256. A mismatch stops the deploy; a maintainer investigates by hand.
 - **The index page is a placeholder.** Its design goes on a canvas first (ask Jatin which), never straight into code.
 - **Fixture keys stay out of git.** The `.pem` files that made `helium-*` fixtures live in the workspace's `.claude/research/` folders.
+- **The Cloudflare token lives only in the `production` environment,** which only `main` can deploy to. Never make it a repo secret or pass it to a job that a pull request can trigger.
+- **Worker logs stay off** (`observability` in wrangler.jsonc): Shelf keeps no record of who checks for updates.
 - **CI runs on GitHub's free runners** (public repo). Don't set `LINUX_RUNNER` to Blacksmith here; that would spend the shared Blacksmith minutes for nothing.

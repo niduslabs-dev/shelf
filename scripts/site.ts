@@ -1,8 +1,8 @@
 /**
  * Builds the static site served at `shelf.niduslabs.dev`: one update file per
  * extension (the URL baked into every listed extension), `index.json` for
- * tools, `blocked.json`, and a placeholder page until the index page is
- * designed. Pure: it returns the files, and the caller writes them.
+ * tools, `blocked.json`, Cloudflare's `_headers`, and a placeholder page
+ * until the index page is designed. Pure: it returns the files, and the caller writes them.
  */
 import type { Manifest } from './manifest.ts';
 import { readPermissions } from './permissions.ts';
@@ -73,6 +73,24 @@ const PLACEHOLDER_PAGE = `<!doctype html>
 `;
 
 /**
+ * Cloudflare's `_headers`. Update files and the index are cached for five
+ * minutes at most, so a block or a new release reaches browsers quickly.
+ */
+const HEADERS = `/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Content-Security-Policy: default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+
+/updates/*
+  Content-Type: application/xml; charset=utf-8
+  Cache-Control: public, max-age=300
+
+/*.json
+  Cache-Control: public, max-age=300
+  Access-Control-Allow-Origin: *
+`;
+
+/**
  * Every file of the site, by path. Blocked extensions get a "no update"
  * answer, so no further version reaches anyone, and leave the index.
  */
@@ -104,5 +122,6 @@ export function buildSite(
   files.set('index.json', `${JSON.stringify(index, null, 2)}\n`);
   files.set('blocked.json', `${JSON.stringify(blocklist, null, 2)}\n`);
   files.set('index.html', PLACEHOLDER_PAGE);
+  files.set('_headers', HEADERS);
   return files;
 }

@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Static files only (built by scripts/publish.ts into _site): no Worker code runs.
+  "name": "shelf",
+  // The Nidus Labs Cloudflare account, which also holds the niduslabs.dev zone.
+  "account_id": "16a3f923e905d6a0e1f7b289d1311519",
+  "compatibility_date": "2026-11-16",
+  "assets": {
+    "directory": "./_site",
+    "html_handling": "drop-trailing-slash",
+    "not_found_handling": "none",
+  },
+  // Every listed extension's update_url lives here, so this domain never changes.
+  "routes": [{ "pattern": "shelf.niduslabs.dev", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
+  // Off on purpose: Shelf keeps no record of who checks for updates.
+  "observability": { "enabled": false },
+}
