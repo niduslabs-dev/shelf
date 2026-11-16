@@ -70,9 +70,28 @@ function setupDialog() {
   const status = document.getElementById('install-status');
   let pending = null;
 
+  // A page can't see Helium's prompt or a refused install, so say what should
+  // happen and offer the setup steps if it didn't.
   function announce(target) {
-    if (status)
-      status.textContent = `Helium is asking you to confirm ${target.dataset.name}. Check the prompt near the address bar.`;
+    if (!status) return;
+    const again = document.createElement('button');
+    again.type = 'button';
+    again.className = 'link-button';
+    again.dataset.openSetup = '';
+    again.textContent = 'Show the setup steps';
+    const message = document.createElement('span');
+    message.className = 'message';
+    message.append(
+      `Helium should now ask you to confirm ${target.dataset.name}, near the address bar. No prompt? The setting isn't on yet. `,
+      again,
+    );
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'close';
+    close.setAttribute('aria-label', 'Close');
+    close.textContent = '✕';
+    close.addEventListener('click', () => status.replaceChildren());
+    status.replaceChildren(message, close);
   }
 
   document.addEventListener('click', (event) => {

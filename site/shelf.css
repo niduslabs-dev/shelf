@@ -377,12 +377,42 @@ a:hover {
 .install-status:empty {
   display: none;
 }
+/* Pinned to the bottom of the window, so it's seen wherever Install was pressed. */
 .install-status:not(:empty) {
-  margin-block: 16px;
-  padding: 12px 14px;
-  border-radius: var(--r-control);
+  position: fixed;
+  z-index: 1;
+  left: 50%;
+  bottom: var(--gutter);
+  translate: -50% 0;
+  width: min(640px, calc(100vw - 2 * var(--gutter)));
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 12px 14px 16px;
+  border-radius: var(--r-panel);
   background: var(--surface);
   outline: 1px solid var(--rule);
+  box-shadow: 0 8px 24px rgb(23 22 28 / 0.12);
+}
+.install-status .message {
+  flex: 1;
+}
+.install-status .close {
+  flex: none;
+  width: var(--tap);
+  height: var(--tap);
+  margin: -10px -4px -10px 0;
+  border: 0;
+  border-radius: var(--r-control);
+  background: none;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.install-status .close:hover {
+  color: var(--ink);
+  background: var(--paper);
 }
 
 /* Reach: the one memorable element. Four steps, filled to the extension's reach. */
@@ -730,6 +760,20 @@ dialog::backdrop {
 }
 .btn:hover {
   border-color: var(--ink-2);
+}
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--moss-ink);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.link-button:hover {
+  color: var(--ink);
 }
 .btn-link {
   display: inline-flex;
