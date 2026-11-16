@@ -10,8 +10,11 @@ A public registry of Chromium extensions for Helium and ungoogled-chromium users
 scripts/
   crx3.ts            CRX3 verification (signatures, ID from the developer key), following Chromium's crx_verifier.cc
   protobuf.ts        the minimal protobuf reader crx3.ts needs
-  crx3.test.ts       tests against Helium-packed files, Chromium's own test files and crafted ones
-  testing/           test-only helpers (a CRX3 writer for broken files)
+  zip.ts             strict zip reader: refuses names that would collide on disk (case, Unicode form), Zip64, encryption
+  manifest.ts        reads manifest.json (strict JSON) and checks a release: MV3, version, higher than current, update_url
+  permissions.ts     what a manifest can reach, the diff between releases, and the PR comment's Markdown
+  *.test.ts          tests: Helium-packed files, Chromium's own test files, crafted broken files and archives
+  testing/           test-only writers (CRX3 and zip) for broken files
   fixtures/          .crx files: helium-* packed by Helium 0.21.1.1, chromium-* from Chromium's components/test/data/crx_file
 .github/workflows/   ci.yml (typecheck, lint, format, test)
 ```
