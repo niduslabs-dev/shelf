@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -9,10 +9,12 @@ import { extensionId } from './crx3.ts';
 import { publish, readExtensions, releaseTag, storedVersions, versionCommits } from './publish.ts';
 import type { ListedExtension, PublishTarget } from './publish.ts';
 import { approvedCrxUrl, updateUrlFor } from './registry.ts';
+import { buildSite } from './site.ts';
 import type { RegistryLists } from './standing.ts';
 import { packCrx3, spki } from './testing/pack-crx3.ts';
 import type { Signer } from './testing/pack-crx3.ts';
 import { writeZip } from './testing/write-zip.ts';
+import { REVIEW_RETRY_MS, fileTrailCache, parseTrailEntry } from './trail-cache.ts';
 import { sha256Hex } from './verify-release.ts';
 
 const signer: Signer = { algorithm: 'rsa', ...generateKeyPairSync('rsa', { modulusLength: 2048 }) };
@@ -274,6 +276,178 @@ describe('store page data', () => {
       text: 'Permission change unknown',
       adds: false,
     });
+  });
+});
+
+function withCacheFolder(run: (folder: string) => Promise<void>): () => Promise<void> {
+  return async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'shelf-trail-'));
+    try {
+      await run(folder);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  };
+}
+
+const clock = (): Date => new Date('2026-11-16T12:00:00Z');
+
+describe('the trail cache', () => {
+  const v2 = crx('2.0', { permissions: ['tabs'], content_scripts: [{ matches: ['*://a.com/*'] }] });
+  const v3 = crx('3.0', { permissions: ['tabs'] });
+  const current: ListedExtension = {
+    id: ID,
+    listing,
+    release: { version: '3.0', crx: SOURCE, sha256: sha256Hex(v3) },
+  };
+  const stored = {
+    [releaseTag(ID, '1.0')]: v1,
+    [releaseTag(ID, '2.0')]: v2,
+    [releaseTag(ID, '3.0')]: v3,
+  };
+  const history = {
+    dates: {
+      [releaseTag(ID, '1.0')]: '2026-10-10T00:00:00Z',
+      [releaseTag(ID, '2.0')]: '2026-11-02T00:00:00Z',
+      [releaseTag(ID, '3.0')]: '2026-11-12T00:00:00Z',
+    },
+    releaseJson: [
+      { sha: 'c3', text: JSON.stringify({ version: '3.0' }) },
+      { sha: 'c2', text: JSON.stringify({ version: '2.0' }) },
+      { sha: 'c1', text: JSON.stringify({ version: '1.0' }) },
+    ],
+    // 1.0 has no PR: it's cached as "not found yet".
+    pulls: { c3: 14, c2: 11 },
+  };
+
+  /** The fake target, counting the calls the cache should save. */
+  function counted(pulls: Record<string, number> = history.pulls) {
+    const base = fakeTarget({}, stored, undefined, { ...history, pulls });
+    const calls = { trailDownloads: 0, releaseDates: 0, history: 0, pulls: 0 };
+    const target: PublishTarget = {
+      ...base,
+      download: async (url) => {
+        if (url !== approvedCrxUrl(ID, '3.0')) calls.trailDownloads++;
+        return base.download(url);
+      },
+      releaseDates: async () => {
+        calls.releaseDates++;
+        return base.releaseDates();
+      },
+      releaseJsonHistory: async (id) => {
+        calls.history++;
+        return base.releaseJsonHistory(id);
+      },
+      pullForCommit: async (sha) => {
+        calls.pulls++;
+        return base.pullForCommit(sha);
+      },
+    };
+    return { target, calls };
+  }
+
+  it(
+    'builds the same trail a second time without downloads or lookups',
+    withCacheFolder(async (folder) => {
+      const first = counted();
+      const uncached = await publish([current], none, first.target);
+      const cache = fileTrailCache(folder);
+      const firstRun = await publish([current], none, first.target, { cache, now: clock });
+      assert.deepEqual(firstRun, uncached);
+      assert.deepEqual(firstRun.warnings, []);
+      assert.equal(first.calls.trailDownloads, 4);
+      assert.equal(first.calls.pulls, 6);
+      assert.equal(readdirSync(folder).length, 3);
+
+      const second = counted();
+      const secondRun = await publish([current], none, second.target, {
+        cache: fileTrailCache(folder),
+        now: clock,
+      });
+      assert.deepEqual(second.calls, { trailDownloads: 0, releaseDates: 0, history: 0, pulls: 0 });
+      assert.deepEqual(secondRun, firstRun);
+      assert.deepEqual(buildSite(secondRun.entries, none), buildSite(firstRun.entries, none));
+    }),
+  );
+
+  it(
+    'looks for a missing review PR again after 24 hours',
+    withCacheFolder(async (folder) => {
+      const start = clock();
+      await publish([current], none, counted().target, {
+        cache: fileTrailCache(folder),
+        now: clock,
+      });
+      const at = (ms: number) => () => new Date(start.getTime() + ms);
+
+      const soon = counted();
+      await publish([current], none, soon.target, {
+        cache: fileTrailCache(folder),
+        now: at(REVIEW_RETRY_MS - 1),
+      });
+      assert.equal(soon.calls.history, 0);
+
+      const later = counted({ ...history.pulls, c1: 9 });
+      const result = await publish([current], none, later.target, {
+        cache: fileTrailCache(folder),
+        now: at(REVIEW_RETRY_MS),
+      });
+      assert.equal(later.calls.history, 1);
+      assert.equal(later.calls.pulls, 1);
+      assert.equal(result.entries[0]?.details.trail[2]?.review, 9);
+      assert.deepEqual(fileTrailCache(folder).read(releaseTag(ID, '1.0'))?.review, { pr: 9 });
+    }),
+  );
+
+  it(
+    'rebuilds an entry that is malformed or names another tag',
+    withCacheFolder(async (folder) => {
+      await publish([current], none, counted().target, { cache: fileTrailCache(folder) });
+      const tag1 = releaseTag(ID, '1.0');
+      const tag2 = releaseTag(ID, '2.0');
+      writeFileSync(join(folder, `${tag1}.json`), '{"tag":');
+      writeFileSync(
+        join(folder, `${tag2}.json`),
+        readFileSync(join(folder, `${releaseTag(ID, '3.0')}.json`)),
+      );
+      const again = counted();
+      await publish([current], none, again.target, { cache: fileTrailCache(folder) });
+      assert.equal(again.calls.trailDownloads, 2);
+      assert.equal(fileTrailCache(folder).read(tag1)?.tag, tag1);
+      assert.deepEqual(fileTrailCache(folder).read(tag2)?.permissions?.content_scripts, [
+        '*://a.com/*',
+      ]);
+    }),
+  );
+});
+
+describe('parseTrailEntry', () => {
+  const tag = releaseTag(ID, '1.0');
+  const permissions = {
+    permissions: ['tabs'],
+    host_permissions: [],
+    optional_permissions: [],
+    optional_host_permissions: [],
+    content_scripts: [],
+  };
+  const parse = (entry: unknown, as = tag) => parseTrailEntry(JSON.stringify(entry), as);
+
+  it('reads a full entry and a partial one', () => {
+    const full = { tag, permissions, publishedAt: NOW, review: { missingCheckedAt: NOW } };
+    assert.deepEqual(parse(full), full);
+    assert.deepEqual(parse({ tag, review: { pr: 3 } }), { tag, review: { pr: 3 } });
+  });
+
+  it('ignores anything malformed', () => {
+    assert.equal(parseTrailEntry('not json', tag), undefined);
+    assert.equal(parse({ tag: releaseTag(ID, '2.0') }), undefined);
+    assert.equal(parse({ tag: '../x' }, '../x'), undefined);
+    assert.equal(parse({ tag, permissions: { ...permissions, permissions: [1] } }), undefined);
+    assert.equal(parse({ tag, permissions: { permissions: [] } }), undefined);
+    assert.equal(parse({ tag, publishedAt: 'yesterday' }), undefined);
+    assert.equal(parse({ tag, review: { pr: 0 } }), undefined);
+    assert.equal(parse({ tag, review: { pr: '3' } }), undefined);
+    assert.equal(parse({ tag, review: {} }), undefined);
   });
 });
 

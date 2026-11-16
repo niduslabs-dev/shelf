@@ -46,10 +46,28 @@ jobs:
       # The scripts need no install; the tests guard against publishing with broken checks.
       - name: Test
         run: node --test 'scripts/**/*.test.ts'
+      # The review trail's cache (scripts/trail-cache.ts): one entry per stored
+      # Release tag, which never changes, so the newest cache is always usable.
+      - name: Restore the trail cache
+        id: trail-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .cache/trail
+          key: trail-v1-${{ hashFiles('extensions/**/release.json', 'blocklist.json', 'delisted.json') }}
+          restore-keys: trail-v1-
       - name: Store releases and build the site
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/publish.ts _site
+      # Saved even when publish stopped part-way, so what it learned isn't lost.
+      # Skipped when nothing was written or this exact key is already saved.
+      - name: Save the trail cache
+        if: ${{ !cancelled() && steps.trail-cache.outputs.cache-hit != 'true' && hashFiles('.cache/trail/**') != '' }}
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: .cache/trail
+          key: ${{ steps.trail-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v7
         with:
           name: site

@@ -24,6 +24,7 @@ scripts/
   verify-release.ts  the checks a downloaded .crx must pass against release.json (hash, signature, ID, manifest), shared by PR check and publish
   pr-check.ts        runs every PR check and renders the comment; pr-check.yml runs it
   publish.ts         stores approved .crx files on Releases `<id>-<version>`, gathers the store pages' data (size, icon, review trail) and builds the site into _site/; publish.yml runs it, then deploys
+  trail-cache.ts     the review trail's cache in .cache/trail/ (publish.yml keeps it with actions/cache): one entry per immutable Release tag, so older .crx files and PR lookups aren't repeated; a "no PR found" answer is retried after 24 hours
   site.ts            the site's files: updates/<id>.xml, index.json, blocked.json, _headers, the store pages, icons and site/'s static files
   pages.ts           the store's HTML: the home page shell (data as JSON) and the server-rendered extension pages; the one HTML-escape helper
   reach.ts           reach level (own data, some sites, all sites, your browser), permissions in plain words, and the trail's permission-change wording
@@ -57,7 +58,7 @@ pnpm format         # oxfmt (format:check in CI)
 - **Extension page `/e/<id>`:** rendered here: icon (or a letter tile), author and source links, Install, version and size, summary, the manifest description (left out when missing or a `__MSG_` placeholder), "What it can reach", the review trail, the details and "Report a problem".
 - **Install** is a real link to the stored `.crx`. The first click opens the setup dialog instead (remembered in `localStorage`); after that the link goes ahead, Helium prompts, and the status line says so.
 - **Reach:** 4 for any browser permission (tabs, history, cookies, webRequest and the rest in reach.ts), 3 for a host or content-script match covering every site, 2 for any other, 1 otherwise. Optional permissions don't raise it; they're listed as "Can ask for: …".
-- **Review trail:** every stored Release `<id>-<version>`, newest first, dated by its `published_at`. The first says "Listed"; the rest diff each manifest with the one before (older `.crx` files are downloaded again). The review link is the PR behind the commit that first set that version in release.json (`/commits?path=`, then `/commits/{sha}/pulls`). Anything publish can't gather becomes a warning in the log, never a stopped deploy.
+- **Review trail:** every stored Release `<id>-<version>`, newest first, dated by its `published_at`. The first says "Listed"; the rest diff each manifest with the one before (older `.crx` files are downloaded once, then read from the trail cache). The review link is the PR behind the commit that first set that version in release.json (`/commits?path=`, then `/commits/{sha}/pulls`). Anything publish can't gather becomes a warning in the log, never a stopped deploy.
 - **Fonts:** Manrope from Google Fonts, as in the prototype.
 - **Check it locally:** `node .claude/checks/build-local-site.ts [empty]` builds `_site/` from crafted entries (one long name, one hostile name), then `pnpm exec wrangler dev --port <free port> --compatibility-date <one the local workerd supports>` serves it with the real `_headers`.
 

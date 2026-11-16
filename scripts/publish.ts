@@ -15,6 +15,7 @@ import { extractIcon } from './icon.ts';
 import { compareVersions, isRecord, parseVersion } from './manifest.ts';
 import type { Manifest } from './manifest.ts';
 import type { TrailRow } from './pages.ts';
+import { readPermissions } from './permissions.ts';
 import { trailChange } from './reach.ts';
 import { REGISTRY_REPO, approvedCrxUrl } from './registry.ts';
 import {
@@ -30,10 +31,14 @@ import { buildSite } from './site.ts';
 import type { SiteDetails, SiteEntry } from './site.ts';
 import { standingOf } from './standing.ts';
 import type { RegistryLists } from './standing.ts';
+import { fileTrailCache, noTrailCache, permissionsManifest, reviewSettled } from './trail-cache.ts';
+import type { CachedReview, TrailCache, TrailEntry } from './trail-cache.ts';
 import { manifestOf, sha256Hex, verifyRelease } from './verify-release.ts';
 
 const CRX_CONTENT_TYPE = 'application/x-chrome-extension';
 const ID_LENGTH = 32;
+/** Where publish.yml restores and saves the trail cache, relative to the checkout. */
+const TRAIL_CACHE_FOLDER = '.cache/trail';
 
 export interface ListedExtension {
   id: string;
@@ -54,6 +59,13 @@ export interface PublishTarget {
   releaseJsonHistory(id: string): Promise<{ sha: string; text: string | undefined }[]>;
   /** The pull request a commit on main came from. */
   pullForCommit(sha: string): Promise<number | undefined>;
+}
+
+export interface PublishOptions {
+  /** What earlier runs learned about each stored release. None by default: everything is gathered again. */
+  cache?: TrailCache;
+  /** The clock for the cache's review retries. */
+  now?: () => Date;
 }
 
 export interface PublishResult {
@@ -96,7 +108,10 @@ export async function publish(
   extensions: ListedExtension[],
   lists: RegistryLists,
   target: PublishTarget,
+  options: PublishOptions = {},
 ): Promise<PublishResult> {
+  const cache = options.cache ?? noTrailCache;
+  const now = options.now ?? (() => new Date());
   const result: PublishResult = { entries: [], stored: [], problems: [], warnings: [] };
   const approved: (Omit<SiteEntry, 'details'> & { bytes: Buffer })[] = [];
 
@@ -106,7 +121,8 @@ export async function publish(
     ...lists.blocklist.map((entry) => entry.id),
     ...lists.delisted.filter((entry) => entry.kind === 'removed').map((entry) => entry.id),
   ]);
-  for (const tag of await target.releaseTags()) {
+  const tags = await target.releaseTags();
+  for (const tag of tags) {
     const id = tag.slice(0, ID_LENGTH);
     if (ID_PATTERN.test(id) && tag[ID_LENGTH] === '-' && !accountedFor.has(id)) {
       result.problems.push(
@@ -166,19 +182,47 @@ export async function publish(
   }
   if (approved.length === 0) return result;
 
-  let dates = new Map<string, string>();
-  try {
-    dates = await target.releaseDates();
-  } catch (error) {
-    result.warnings.push(`Release dates: ${messageOf(error)}`);
+  // When every release the trail shows already has its date cached, the
+  // Releases list isn't read again. A release stored by this run, or a draft,
+  // has no cached date, so the list is read as before.
+  let dates = cachedDates(approved, tags, cache);
+  if (dates === undefined) {
+    dates = new Map();
+    try {
+      dates = await target.releaseDates();
+    } catch (error) {
+      result.warnings.push(`Release dates: ${messageOf(error)}`);
+    }
   }
   for (const { bytes, ...entry } of approved) {
     // Sequential to stay well inside GitHub's rate limits.
     // oxlint-disable-next-line no-await-in-loop
-    const details = await gatherDetails(entry, bytes, dates, target, result.warnings);
+    const details = await gatherDetails(entry, bytes, dates, target, result.warnings, cache, now);
     result.entries.push({ ...entry, details });
   }
   return result;
+}
+
+/**
+ * The dates of every release each approved extension's trail will show, all
+ * from the cache, or `undefined` when any of them is missing there.
+ */
+function cachedDates(
+  approved: { id: string; release: Release }[],
+  tags: string[],
+  cache: TrailCache,
+): Map<string, string> | undefined {
+  const dates = new Map<string, string>();
+  for (const { id, release } of approved) {
+    const versions = new Set([release.version, ...storedVersions(id, tags)]);
+    for (const version of versions) {
+      const tag = releaseTag(id, version);
+      const publishedAt = cache.read(tag)?.publishedAt;
+      if (publishedAt === undefined) return undefined;
+      dates.set(tag, publishedAt);
+    }
+  }
+  return dates;
 }
 
 function messageOf(error: unknown): string {
@@ -225,6 +269,8 @@ export function storedVersions(id: string, tags: Iterable<string>): string[] {
  * current `.crx`, and the review trail from every stored release, diffing
  * each one's manifest with the one before it. Problems become warnings and
  * leave the detail out, since none of this affects what browsers install.
+ * What it learns about each stored release goes into the cache, and what the
+ * cache already holds isn't downloaded or looked up again.
  */
 async function gatherDetails(
   entry: Omit<SiteEntry, 'details'>,
@@ -232,6 +278,8 @@ async function gatherDetails(
   dates: Map<string, string>,
   target: PublishTarget,
   warnings: string[],
+  cache: TrailCache,
+  now: () => Date,
 ): Promise<SiteDetails> {
   const { id, release, manifest } = entry;
   let icon: Buffer | undefined;
@@ -243,9 +291,15 @@ async function gatherDetails(
 
   const versions = storedVersions(id, dates.keys());
   if (!versions.includes(release.version)) versions.unshift(release.version);
+  const cached = new Map(versions.map((version) => [version, cache.read(releaseTag(id, version))]));
   const manifests = new Map<string, Manifest | undefined>([[release.version, manifest]]);
   for (const version of versions) {
     if (manifests.has(version)) continue;
+    const permissions = cached.get(version)?.permissions;
+    if (permissions !== undefined) {
+      manifests.set(version, permissionsManifest(permissions));
+      continue;
+    }
     try {
       // oxlint-disable-next-line no-await-in-loop
       const older = await target.download(approvedCrxUrl(id, version));
@@ -256,11 +310,18 @@ async function gatherDetails(
     }
   }
 
+  // release.json's history is only walked when some version's review isn't settled in the cache.
+  const checkedAt = now();
   let reviews = new Map<string, string>();
-  try {
-    reviews = versionCommits(await target.releaseJsonHistory(id));
-  } catch (error) {
-    warnings.push(`${id} review history: ${messageOf(error)}`);
+  // Without the history nothing new is known, so no "not found" answers are cached either.
+  let historyFailed = false;
+  if (versions.some((version) => !reviewSettled(cached.get(version)?.review, checkedAt))) {
+    try {
+      reviews = versionCommits(await target.releaseJsonHistory(id));
+    } catch (error) {
+      warnings.push(`${id} review history: ${messageOf(error)}`);
+      historyFailed = true;
+    }
   }
 
   const trail: TrailRow[] = [];
@@ -274,22 +335,48 @@ async function gatherDetails(
         : current === undefined || previous === undefined
           ? { text: 'Permission change unknown', adds: false }
           : trailChange(previous, current);
+    const tag = releaseTag(id, version);
+    const known = cached.get(version);
     let review: number | undefined;
-    const sha = reviews.get(version);
-    if (sha !== undefined) {
+    let reviewState: CachedReview | undefined = known?.review;
+    if (reviewSettled(known?.review, checkedAt)) {
+      review = known?.review !== undefined && 'pr' in known.review ? known.review.pr : undefined;
+    } else if (!historyFailed) {
+      const sha = reviews.get(version);
       try {
-        // oxlint-disable-next-line no-await-in-loop
-        review = await target.pullForCommit(sha);
+        if (sha !== undefined) {
+          // oxlint-disable-next-line no-await-in-loop
+          review = await target.pullForCommit(sha);
+        }
+        reviewState =
+          review === undefined ? { missingCheckedAt: checkedAt.toISOString() } : { pr: review };
       } catch (error) {
-        warnings.push(`${releaseTag(id, version)} review: ${messageOf(error)}`);
+        warnings.push(`${tag} review: ${messageOf(error)}`);
       }
     }
+    const publishedAt = dates.get(tag);
     trail.push({
       version,
-      date: dates.get(releaseTag(id, version)) ?? new Date().toISOString(),
+      date: publishedAt ?? new Date().toISOString(),
       change,
       ...(review === undefined ? {} : { review }),
     });
+
+    // A failed Releases list leaves the cached date as it was.
+    const cachedPublishedAt = publishedAt ?? known?.publishedAt;
+    const learned: TrailEntry = {
+      tag,
+      ...(current === undefined ? {} : { permissions: readPermissions(current) }),
+      ...(cachedPublishedAt === undefined ? {} : { publishedAt: cachedPublishedAt }),
+      ...(reviewState === undefined ? {} : { review: reviewState }),
+    };
+    if (JSON.stringify(learned) !== JSON.stringify(known)) {
+      try {
+        cache.write(learned);
+      } catch (error) {
+        warnings.push(`${tag} cache: ${messageOf(error)}`);
+      }
+    }
   }
   return { size: bytes.length, ...(icon === undefined ? {} : { icon }), trail };
 }
@@ -305,6 +392,7 @@ async function main(): Promise<void> {
   const outDir = process.argv[2];
   if (outDir === undefined) throw new Error('Usage: node scripts/publish.ts <output folder>');
   const root = join(import.meta.dirname, '..');
+  const cache = fileTrailCache(join(root, TRAIL_CACHE_FOLDER));
   const github = new GitHub(requiredEnv('GITHUB_TOKEN'));
   const commit = requiredEnv('GITHUB_SHA');
 
@@ -312,29 +400,34 @@ async function main(): Promise<void> {
     blocklist: parseBlocklist(readFileSync(join(root, 'blocklist.json'), 'utf8')),
     delisted: parseDelisted(readFileSync(join(root, 'delisted.json'), 'utf8')),
   };
-  const result = await publish(readExtensions(root), lists, {
-    releaseTags: async () => github.releaseTags(REGISTRY_REPO),
-    hasRelease: async (tag) => github.hasRelease(REGISTRY_REPO, tag),
-    download,
-    releaseDates: async () => github.releaseDates(REGISTRY_REPO),
-    releaseJsonHistory: async (id) => {
-      const path = `extensions/${id}/release.json`;
-      const shas = await github.commitsFor(REGISTRY_REPO, path);
-      const history: { sha: string; text: string | undefined }[] = [];
-      for (const sha of shas) {
-        // oxlint-disable-next-line no-await-in-loop
-        history.push({ sha, text: await github.fileText(REGISTRY_REPO, path, sha) });
-      }
-      return history;
+  const result = await publish(
+    readExtensions(root),
+    lists,
+    {
+      releaseTags: async () => github.releaseTags(REGISTRY_REPO),
+      hasRelease: async (tag) => github.hasRelease(REGISTRY_REPO, tag),
+      download,
+      releaseDates: async () => github.releaseDates(REGISTRY_REPO),
+      releaseJsonHistory: async (id) => {
+        const path = `extensions/${id}/release.json`;
+        const shas = await github.commitsFor(REGISTRY_REPO, path);
+        const history: { sha: string; text: string | undefined }[] = [];
+        for (const sha of shas) {
+          // oxlint-disable-next-line no-await-in-loop
+          history.push({ sha, text: await github.fileText(REGISTRY_REPO, path, sha) });
+        }
+        return history;
+      },
+      pullForCommit: async (sha) => github.pullForCommit(REGISTRY_REPO, sha),
+      createRelease: async (tag, name, body, bytes) =>
+        github.createRelease(
+          REGISTRY_REPO,
+          { tag, target: commit, name, body },
+          { name: `${tag.slice(0, tag.indexOf('-'))}.crx`, contentType: CRX_CONTENT_TYPE, bytes },
+        ),
     },
-    pullForCommit: async (sha) => github.pullForCommit(REGISTRY_REPO, sha),
-    createRelease: async (tag, name, body, bytes) =>
-      github.createRelease(
-        REGISTRY_REPO,
-        { tag, target: commit, name, body },
-        { name: `${tag.slice(0, tag.indexOf('-'))}.crx`, contentType: CRX_CONTENT_TYPE, bytes },
-      ),
-  });
+    { cache },
+  );
   for (const tag of result.stored) console.log(`Stored ${tag}`);
   for (const warning of result.warnings) console.warn(`Warning: ${warning}`);
   if (result.problems.length > 0) {
