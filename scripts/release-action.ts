@@ -56,8 +56,12 @@ function manifestText(manifest: Manifest, key: string): string | undefined {
     : undefined;
 }
 
-/** A first listing.json from the manifest. The author edits it before opening the PR. */
-export function draftListing(manifest: Manifest, repo: string, owner: string): Listing {
+/**
+ * A first listing.json from the manifest. `author` is whoever ran the workflow,
+ * since the PR check needs it in shelf.json's publishers (an organisation
+ * owner can't be). The author edits it before opening the PR.
+ */
+export function draftListing(manifest: Manifest, repo: string, author: string): Listing {
   const name = manifestText(manifest, 'name');
   const summary = manifestText(manifest, 'description');
   return {
@@ -66,7 +70,7 @@ export function draftListing(manifest: Manifest, repo: string, owner: string): L
       summary !== undefined && summary.length <= MAX_LISTING_SUMMARY
         ? summary
         : SUMMARY_PLACEHOLDER,
-    author: owner,
+    author,
     repo: `${GITHUB_ORIGIN}/${repo}`,
   };
 }
@@ -226,7 +230,7 @@ async function writeSummary(): Promise<void> {
     release,
     repo,
     existingListing,
-    draft: draftListing(manifest, repo, requiredEnv('GITHUB_REPOSITORY_OWNER')),
+    draft: draftListing(manifest, repo, requiredEnv('GITHUB_ACTOR')),
   });
   appendFileSync(requiredEnv('GITHUB_STEP_SUMMARY'), markdown);
   process.stdout.write(markdown);
