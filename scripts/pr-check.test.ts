@@ -3,8 +3,13 @@ import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
 
 import { extensionId } from './crx3.ts';
-import { checkPullRequest, renderComment } from './pr-check.ts';
-import type { CheckResult, PullRequestSource } from './pr-check.ts';
+import {
+  REVIEW_GUIDELINES_URL,
+  autoMergeVerdict,
+  checkPullRequest,
+  renderComment,
+} from './pr-check.ts';
+import type { AutoMergeFacts, CheckResult, PullRequestSource } from './pr-check.ts';
 import { approvedCrxUrl, updateUrlFor } from './registry.ts';
 import type { DelistedExtension } from './schema.ts';
 import { packCrx3, spki } from './testing/pack-crx3.ts';
@@ -50,6 +55,7 @@ const claim = JSON.stringify({
 
 interface Fake {
   author?: string;
+  baseRef?: string;
   prFiles?: Record<string, string>;
   statuses?: Record<string, string>;
   mainFiles?: Record<string, string>;
@@ -63,6 +69,7 @@ function fakePr(fake: Fake): PullRequestSource {
   const prFiles = fake.prFiles ?? {};
   return {
     author: fake.author ?? 'alice',
+    baseRef: fake.baseRef ?? 'main',
     files: Object.keys(prFiles).map((path) => ({ path, status: fake.statuses?.[path] ?? 'added' })),
     readPrFile: async (path) => prFiles[path],
     readMainFile: async (path) => fake.mainFiles?.[path],
@@ -281,6 +288,142 @@ describe('checkPullRequest', () => {
   });
 });
 
+async function verdictOf(fake: Fake): Promise<string> {
+  const { autoMerge } = await checkPullRequest(fakePr(fake));
+  return autoMerge.eligible ? 'eligible' : autoMerge.reasons.join('; ');
+}
+
+describe('auto-merge eligibility', () => {
+  it('allows a listed release by a publisher that changes only release.json and adds nothing', async () => {
+    assert.equal(await verdictOf(release('1.1', crx('1.1'))), 'eligible');
+    assert.equal(
+      await verdictOf(release('1.1', crx('1.1'), { author: 'example-bot[bot]' })),
+      'eligible',
+    );
+  });
+
+  it('allows a release that only removes permissions', async () => {
+    assert.equal(await verdictOf(release('1.1', crx('1.1', { permissions: [] }))), 'eligible');
+  });
+
+  it('refuses a new listing', async () => {
+    assert.match(await verdictOf(newListing()), /a new listing/);
+  });
+
+  it('refuses a final release of an extension that is leaving', async () => {
+    const delisted: DelistedExtension[] = [
+      { id: ID, kind: 'left', reason: 'Moving', date: '2026-11-16' },
+    ];
+    const fake = release('2.0', crx('2.0', { update_url: 'https://example.com/u.xml' }), {
+      delisted,
+    });
+    assert.match(await verdictOf(fake), /a final release/);
+  });
+
+  it('refuses a blocked or removed extension', async () => {
+    assert.match(await verdictOf(release('1.1', crx('1.1'), { blocked: [ID] })), /is blocked/);
+    const delisted: DelistedExtension[] = [
+      { id: ID, kind: 'removed', reason: 'x', date: '2026-11-16' },
+    ];
+    assert.match(await verdictOf(release('1.1', crx('1.1'), { delisted })), /is removed/);
+  });
+
+  it('refuses a PR into another branch', async () => {
+    assert.match(
+      await verdictOf(release('1.1', crx('1.1'), { baseRef: 'old' })),
+      /targets old, not main/,
+    );
+  });
+
+  it('refuses a PR that changes anything besides release.json', async () => {
+    const editsListing = release('1.1', crx('1.1'));
+    editsListing.prFiles = { ...editsListing.prFiles, [`${folder}/listing.json`]: listing };
+    assert.match(await verdictOf(editsListing), /changes more than release\.json/);
+    assert.match(
+      await verdictOf({ prFiles: { 'scripts/pr-check.ts': '' } }),
+      /changes more than release\.json/,
+    );
+  });
+
+  it('refuses when any check has a problem', async () => {
+    assert.match(await verdictOf(release('1.0', crx('1.0'))), /not every check passed/);
+  });
+
+  it('refuses when the approved release could not be compared', async () => {
+    const fake = release('1.1', crx('1.1'));
+    delete fake.downloads![approvedCrxUrl(ID, '1.0')];
+    assert.match(await verdictOf(fake), /permissions not compared/);
+  });
+
+  for (const [what, extra] of [
+    ['permissions', { permissions: ['storage', 'tabs'] }],
+    ['host permissions', { host_permissions: ['https://example.com/*'] }],
+    ['optional permissions', { optional_permissions: ['bookmarks'] }],
+    ['optional host permissions', { optional_host_permissions: ['<all_urls>'] }],
+    [
+      'content-script matches',
+      { content_scripts: [{ matches: ['https://example.com/*'], js: ['a.js'] }] },
+    ],
+  ] as const) {
+    it(`refuses a release that adds ${what}`, async () => {
+      assert.match(await verdictOf(release('1.1', crx('1.1', extra))), /adds permissions/);
+    });
+  }
+
+  it('refuses a release that changes other manifest keys', async () => {
+    assert.match(
+      await verdictOf(release('1.1', crx('1.1', { background: { service_worker: 'b.js' } }))),
+      /changes the manifest's background/,
+    );
+  });
+
+  it('refuses an author who is not a publisher', async () => {
+    assert.match(
+      await verdictOf(release('1.1', crx('1.1'), { author: 'mallory' })),
+      /the author is not a publisher in shelf\.json/,
+    );
+    const noClaim = release('1.1', crx('1.1'));
+    delete noClaim.claim;
+    assert.match(await verdictOf(noClaim), /the author is not a publisher/);
+  });
+
+  it('lists every reason that applies', () => {
+    const facts: AutoMergeFacts = {
+      id: ID,
+      kind: 'new listing',
+      standing: 'listed',
+      baseRef: 'main',
+      files: [{ path: `${folder}/listing.json`, status: 'added' }],
+      problems: ['x'],
+      diff: undefined,
+      authorIsPublisher: false,
+    };
+    assert.deepEqual(autoMergeVerdict(facts), {
+      eligible: false,
+      reasons: [
+        'a new listing',
+        'changes more than release.json',
+        'not every check passed',
+        'the author is not a publisher in shelf.json',
+      ],
+    });
+  });
+
+  it('refuses a release.json that was added rather than edited', () => {
+    const verdict = autoMergeVerdict({
+      id: ID,
+      kind: 'release',
+      standing: 'listed',
+      baseRef: 'main',
+      files: [{ path: `${folder}/release.json`, status: 'added' }],
+      problems: [],
+      diff: { permissions: [], addsPermissions: false, otherChangedKeys: [] },
+      authorIsPublisher: true,
+    });
+    assert.deepEqual(verdict.reasons, ['changes more than release.json']);
+  });
+});
+
 describe('renderComment', () => {
   const base: CheckResult = {
     id: ID,
@@ -291,6 +434,7 @@ describe('renderComment', () => {
     needsCloseReview: false,
     versions: undefined,
     leavingTo: undefined,
+    autoMerge: { eligible: true, reasons: [] },
   };
 
   it('neutralises mentions, HTML and backticks from PR content', () => {
@@ -311,6 +455,29 @@ describe('renderComment', () => {
       renderComment({ ...base, versions: { from: undefined, to: '1.0' } }),
       /Version 1\.0\n/,
     );
+  });
+
+  it('says when a PR is eligible for auto-merge and links the review guidelines', () => {
+    const body = renderComment(base);
+    assert.match(body, /\*\*Eligible for auto-merge\.\*\*/);
+    assert.ok(body.includes(`[review guidelines](${REVIEW_GUIDELINES_URL})`));
+    assert.equal(
+      REVIEW_GUIDELINES_URL,
+      'https://github.com/niduslabs-dev/shelf/blob/main/REVIEW.md',
+    );
+  });
+
+  it('says why a PR is reviewed by hand, with untrusted keys neutralised', () => {
+    const body = renderComment({
+      ...base,
+      autoMerge: { eligible: false, reasons: ['adds permissions', "changes the manifest's <b>@x"] },
+    });
+    assert.match(
+      body,
+      /\*\*Reviewed by hand:\*\* adds permissions; changes the manifest's &lt;b>@​x\./,
+    );
+    assert.doesNotMatch(body, /Eligible/);
+    assert.ok(body.includes(REVIEW_GUIDELINES_URL));
   });
 
   it('carries the marker so the next run edits the same comment', () => {

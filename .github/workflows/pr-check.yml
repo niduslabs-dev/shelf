@@ -8,6 +8,10 @@
 #     TypeScript directly;
 #   - the PR's files are read through the API as data, and PR fields reach the
 #     script through `env`, never by interpolating them into `run`.
+#
+# It also uploads `verdict.json` (whether the PR may be merged without a
+# person, and why not). auto-merge.yml reads it in a separate run, so the token
+# that can merge never runs alongside anything a PR can influence.
 name: PR check
 
 on:
@@ -44,4 +48,12 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          VERDICT_PATH: verdict.json
         run: node scripts/pr-check.ts
+      - uses: actions/upload-artifact@v7
+        with:
+          name: verdict
+          path: verdict.json
+          if-no-files-found: error
+          retention-days: 1

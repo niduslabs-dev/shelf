@@ -22,7 +22,8 @@ scripts/
   pack.ts            packs an author's folder into a signed .crx: skips dotfiles, refuses .pem/.key files, checks MV3 and update_url, then runs verifyRelease on the result
   release-action.ts  the publish Action's steps: `pack` and `summary` (release.json, draft listing.json, links that open the Shelf PR)
   verify-release.ts  the checks a downloaded .crx must pass against release.json (hash, signature, ID, manifest), shared by PR check and publish
-  pr-check.ts        runs every PR check and renders the comment; pr-check.yml runs it
+  pr-check.ts        runs every PR check, decides auto-merge eligibility and renders the comment; pr-check.yml runs it
+  auto-merge.ts      auto-merge.yml's checks: the verdict artifact's shape, then the live PR against it
   publish.ts         stores approved .crx files on Releases `<id>-<version>`, gathers the store pages' data (size, icon, review trail) and builds the site into _site/; publish.yml runs it, then deploys
   trail-cache.ts     the review trail's cache in .cache/trail/ (publish.yml keeps it with actions/cache): one entry per immutable Release tag, so older .crx files and PR lookups aren't repeated; a "no PR found" answer is retried after 24 hours
   site.ts            the site's files: updates/<id>.xml, index.json, blocked.json, _headers, the store pages, icons and site/'s static files
@@ -35,7 +36,7 @@ scripts/
 site/                the store's browser files, copied as they are: shelf.css (tokens and every style) and shelf.js (home list, search, setup dialog, install status)
 actions/publish/     the authors' publish Action (composite): pack and sign, GitHub Release `v<version>`, job summary with the PR links
 wrangler.jsonc       Worker `shelf`: serves _site/ at shelf.niduslabs.dev (custom domain; Wrangler made the DNS record)
-.github/workflows/   ci.yml (typecheck, lint, format, test), pr-check.yml (listing and release PRs), publish.yml (on main: store releases, build, deploy with Wrangler)
+.github/workflows/   ci.yml (typecheck, lint, format, test), pr-check.yml (listing and release PRs), auto-merge.yml (merges eligible releases; off by default), publish.yml (on main: store releases, build, deploy with Wrangler)
 blocklist.json       blocked extension IDs (update file answers "no update")
 delisted.json        IDs no longer listed: `removed` ("no update") or `left` (its final release stays served)
 extensions/<id>/     listing.json and release.json per extension (none yet)
@@ -61,6 +62,14 @@ pnpm format         # oxfmt (format:check in CI)
 - **Review trail:** every stored Release `<id>-<version>`, newest first, dated by its `published_at`. The first says "Listed"; the rest diff each manifest with the one before (older `.crx` files are downloaded once, then read from the trail cache). The review link is the PR behind the commit that first set that version in release.json (`/commits?path=`, then `/commits/{sha}/pulls`). Anything publish can't gather becomes a warning in the log, never a stopped deploy.
 - **Fonts:** Manrope from Google Fonts, as in the prototype.
 - **Check it locally:** `node .claude/checks/build-local-site.ts [empty]` builds `_site/` from crafted entries (one long name, one hostile name), then `pnpm exec wrangler dev --port <free port> --compatibility-date <one the local workerd supports>` serves it with the real `_headers`.
+
+## Auto-merge (off by default)
+
+Every PR is reviewed by hand unless the repo variable `SHELF_AUTO_MERGE` is `true`. Turn it on with `gh variable set SHELF_AUTO_MERGE --body true -R niduslabs-dev/shelf`; delete the variable (`gh variable delete SHELF_AUTO_MERGE -R niduslabs-dev/shelf`) to turn it off.
+
+- **What it merges** (`autoMergeVerdict` in pr-check.ts): a release, not a new listing, of a listed extension (not blocked, removed or left, so never a final release), into `main`, by a publisher in its `shelf.json`, changing only `extensions/<id>/release.json`, with every check passed, no added permissions, host permissions, optional permissions or content-script matches, and no other manifest key changed. The PR comment says "Eligible for auto-merge" or "Reviewed by hand: <reasons>", and links REVIEW.md.
+- **How:** pr-check.yml uploads `verdict.json` (`{ pr, headSha, eligible, reasons }`, kept one day). auto-merge.yml runs on `workflow_run` after a successful PR check that was a `pull_request_target` run of pr-check.yml, reads the verdict with auto-merge.ts, re-reads the live PR (open, into `main`, same head commit, still one release.json), squash-merges with `--match-head-commit`, then dispatches Publish, since merges made with `GITHUB_TOKEN` start no push workflows.
+- **Why two workflows:** the token that can write to `main` never runs next to anything a PR can influence. pr-check.yml handles PR data with a read-only token; auto-merge.yml holds the write token but checks out only `main`, installs nothing and treats the artifact as data. Keep it that way: never add a PR checkout, an install or `${{ }}` inside `run` to auto-merge.yml.
 
 ## Rules
 

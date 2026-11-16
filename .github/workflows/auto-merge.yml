@@ -1,0 +1,99 @@
+# Merges a release PR without a person when PR check found it eligible, then
+# dispatches Publish. Off unless the repo variable SHELF_AUTO_MERGE is `true`.
+#
+# Eligible (scripts/pr-check.ts, autoMergeVerdict): a release of a listed
+# extension into main, by a publisher in its shelf.json, changing only its
+# release.json, passing every check, adding no permissions, host permissions,
+# optional permissions or content-script matches, and changing no other
+# manifest key.
+#
+# Security: this job holds a token that can write to main, so it is kept apart
+# from everything a PR can influence.
+#   - It runs only after a successful PR check run that was a
+#     `pull_request_target` run of .github/workflows/pr-check.yml, so its
+#     verdict came from main's code. A PR can add a workflow named "PR check"
+#     that runs under `pull_request`; the event and path checks ignore it.
+#   - It checks out main and never the PR, installs nothing, and runs only
+#     scripts/auto-merge.ts, which uses `node:` modules only.
+#   - The verdict artifact is data: auto-merge.ts parses it strictly, then the
+#     live PR is read again through the API and must still be open, into main,
+#     at the checked commit and changing one release.json. The merge is pinned
+#     to that commit with --match-head-commit.
+#   - Every value reaches `run` through `env`, never by interpolation.
+name: Auto-merge
+
+on:
+  workflow_run:
+    workflows: [PR check]
+    types: [completed]
+
+permissions: {}
+
+# No concurrency group: a group keeps one pending run and drops the rest.
+# Two merges racing is harmless, since each is pinned to its checked commit.
+
+jobs:
+  merge:
+    name: Merge an eligible release
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      vars.SHELF_AUTO_MERGE == 'true' &&
+      github.event.workflow_run.event == 'pull_request_target' &&
+      github.event.workflow_run.path == '.github/workflows/pr-check.yml' &&
+      github.event.workflow_run.repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      # Reads the verdict artifact and dispatches Publish.
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: verdict
+          path: ${{ runner.temp }}/verdict
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Read the verdict
+        id: verdict
+        env:
+          VERDICT: ${{ runner.temp }}/verdict/verdict.json
+        run: node scripts/auto-merge.ts verdict "$VERDICT" >> "$GITHUB_OUTPUT"
+      - name: Check the live PR
+        if: steps.verdict.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.verdict.outputs.pr }}
+          VERDICT: ${{ runner.temp }}/verdict/verdict.json
+          LIVE: ${{ runner.temp }}/live
+        run: |
+          mkdir -p "$LIVE"
+          gh api "repos/$REPO/pulls/$PR" > "$LIVE/pull.json"
+          gh api "repos/$REPO/pulls/$PR/files?per_page=100" > "$LIVE/files.json"
+          node scripts/auto-merge.ts live "$VERDICT" "$LIVE/pull.json" "$LIVE/files.json"
+      - name: Merge
+        if: steps.verdict.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.verdict.outputs.pr }}
+          SHA: ${{ steps.verdict.outputs.sha }}
+        run: gh pr merge "$PR" --repo "$REPO" --squash --match-head-commit "$SHA"
+      # A merge made with GITHUB_TOKEN starts no push workflows, so Publish
+      # has to be started by hand.
+      - name: Start Publish
+        if: steps.verdict.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: gh workflow run publish.yml --repo "$REPO" --ref main
