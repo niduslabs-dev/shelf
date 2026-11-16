@@ -6,6 +6,7 @@
 import { isRecord } from './manifest.ts';
 
 export const ID_PATTERN = /^[a-p]{32}$/;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 /** GitHub's login rules, plus the `[bot]` suffix of GitHub App accounts. */
 const LOGIN_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$/;
 const REPO_NAME_PATTERN = /^[A-Za-z0-9._-]{1,100}$/;
@@ -22,6 +23,8 @@ export interface Listing {
 export interface Release {
   version: string;
   crx: string;
+  /** Lowercase hex SHA-256 of the `.crx`, so the bytes reviewed are the bytes stored. */
+  sha256: string;
 }
 
 export interface RepoRef {
@@ -113,15 +116,21 @@ export function parseRelease(source: string, repo: RepoRef): Parsed<Release> {
   const file = 'release.json';
   const json = parseJson(source, file);
   if (!json.ok) return json;
-  const problems = checkKeys(json.value, ['version', 'crx'], file);
+  const problems = checkKeys(json.value, ['version', 'crx', 'sha256'], file);
   const version = requiredString(json.value, 'version', file, problems);
   const crx = requiredString(json.value, 'crx', file, problems);
+  const sha256 = requiredString(json.value, 'sha256', file, problems);
+  if (sha256 && !SHA256_PATTERN.test(sha256)) {
+    problems.push(`${file} "sha256" must be 64 lowercase hex characters`);
+  }
   if (crx && !isReleaseAsset(crx, repo)) {
     problems.push(
       `${file} "crx" must be a release asset of the listing's repo: https://github.com/${repo.owner}/${repo.name}/releases/download/<tag>/<file>.crx`,
     );
   }
-  return problems.length > 0 ? { ok: false, problems } : { ok: true, value: { version, crx } };
+  return problems.length > 0
+    ? { ok: false, problems }
+    : { ok: true, value: { version, crx, sha256 } };
 }
 
 function isReleaseAsset(url: string, repo: RepoRef): boolean {

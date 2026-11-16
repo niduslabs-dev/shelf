@@ -6,13 +6,10 @@
  * Run by `.github/workflows/pr-check.yml` under `pull_request_target`: this
  * file comes from `main`, and everything read from the PR is data.
  */
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-import { Crx3Error, verifyCrx3 } from './crx3.ts';
 import { GitHub, download } from './github.ts';
 import type { PrFile } from './github.ts';
-import { ManifestError, checkManifest, readManifest } from './manifest.ts';
 import type { Manifest } from './manifest.ts';
 import { diffRelease, permissionReport } from './permissions.ts';
 import { approvedCrxUrl } from './registry.ts';
@@ -25,7 +22,7 @@ import {
   parseRepoUrl,
 } from './schema.ts';
 import type { BlockedExtension, Listing } from './schema.ts';
-import { ZipError } from './zip.ts';
+import { manifestOf, sha256Hex, verifyRelease } from './verify-release.ts';
 
 /** Finds this workflow's own comment on a PR. */
 export const COMMENT_MARKER = '<!-- shelf-pr-check -->';
@@ -154,22 +151,6 @@ export async function checkPullRequest(pr: PullRequestSource): Promise<CheckResu
   } catch (error) {
     return fail(`Could not download the .crx: ${errorMessage(error)}`);
   }
-  result.notes.push(
-    `SHA-256 of the .crx: \`${createHash('sha256').update(crxBytes).digest('hex')}\``,
-  );
-
-  let manifest: Manifest;
-  try {
-    const crx = verifyCrx3(crxBytes);
-    if (crx.id !== id) return fail(`The .crx is signed for ID ${crx.id}, not ${id}`);
-    manifest = readManifest(crx.archive);
-  } catch (error) {
-    if (error instanceof Crx3Error || error instanceof ZipError || error instanceof ManifestError) {
-      return fail(`The .crx was refused: ${error.message}`);
-    }
-    throw error;
-  }
-
   let currentVersion: string | undefined;
   let previous: Manifest | undefined;
   if (!isNew) {
@@ -178,9 +159,7 @@ export async function checkPullRequest(pr: PullRequestSource): Promise<CheckResu
       return fail('The approved release.json on main is unreadable; a maintainer needs to look');
     currentVersion = approved.value.version;
     try {
-      previous = readManifest(
-        verifyCrx3(await pr.download(approvedCrxUrl(id, currentVersion))).archive,
-      );
+      previous = manifestOf(await pr.download(approvedCrxUrl(id, currentVersion)), id);
     } catch (error) {
       result.problems.push(
         `Could not read the approved ${currentVersion} to compare permissions: ${errorMessage(error)}`,
@@ -188,9 +167,11 @@ export async function checkPullRequest(pr: PullRequestSource): Promise<CheckResu
     }
   }
 
-  result.problems.push(
-    ...checkManifest(manifest, { id, version: release.value.version, currentVersion }),
-  );
+  const verified = verifyRelease(crxBytes, id, release.value, currentVersion);
+  result.problems.push(...verified.problems);
+  const { manifest } = verified;
+  if (manifest === undefined) return result;
+  result.notes.push(`SHA-256 of the .crx: \`${sha256Hex(crxBytes)}\` (matches release.json)`);
   if (isNew || previous !== undefined) {
     result.report = permissionReport(previous, manifest);
     result.needsCloseReview = isNew || diffRelease(previous, manifest).addsPermissions;

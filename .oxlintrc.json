@@ -67,6 +67,12 @@
         "no-await-in-loop": "off",
         "typescript/no-floating-promises": "off"
       }
+    },
+    {
+      "files": ["scripts/publish.ts"],
+      "rules": {
+        "no-console": "off"
+      }
     }
   ]
 }

@@ -9,6 +9,7 @@ import { approvedCrxUrl, updateUrlFor } from './registry.ts';
 import { packCrx3, spki } from './testing/pack-crx3.ts';
 import type { Signer } from './testing/pack-crx3.ts';
 import { writeZip } from './testing/write-zip.ts';
+import { sha256Hex } from './verify-release.ts';
 
 function newSigner(): Signer {
   return { algorithm: 'rsa', ...generateKeyPairSync('rsa', { modulusLength: 2048 }) };
@@ -79,15 +80,18 @@ function fakePr(fake: Fake): PullRequestSource {
 }
 
 const folder = `extensions/${ID}`;
+const v1 = crx('1.0');
+const releaseJson = (version: string, file: Buffer) =>
+  JSON.stringify({ version, crx: crxUrl(`v${version}`), sha256: sha256Hex(file) });
 
 function newListing(overrides: Fake = {}): Fake {
   return {
     prFiles: {
       [`${folder}/listing.json`]: listing,
-      [`${folder}/release.json`]: JSON.stringify({ version: '1.0', crx: crxUrl('v1.0') }),
+      [`${folder}/release.json`]: releaseJson('1.0', v1),
     },
     claim,
-    downloads: { [crxUrl('v1.0')]: crx('1.0') },
+    downloads: { [crxUrl('v1.0')]: v1 },
     ...overrides,
   };
 }
@@ -95,15 +99,15 @@ function newListing(overrides: Fake = {}): Fake {
 function release(version: string, file: Buffer, overrides: Fake = {}): Fake {
   return {
     prFiles: {
-      [`${folder}/release.json`]: JSON.stringify({ version, crx: crxUrl(`v${version}`) }),
+      [`${folder}/release.json`]: releaseJson(version, file),
     },
     statuses: { [`${folder}/release.json`]: 'modified' },
     mainFiles: {
       [`${folder}/listing.json`]: listing,
-      [`${folder}/release.json`]: JSON.stringify({ version: '1.0', crx: crxUrl('v1.0') }),
+      [`${folder}/release.json`]: releaseJson('1.0', v1),
     },
     claim,
-    downloads: { [crxUrl(`v${version}`)]: file, [approvedCrxUrl(ID, '1.0')]: crx('1.0') },
+    downloads: { [crxUrl(`v${version}`)]: file, [approvedCrxUrl(ID, '1.0')]: v1 },
     ...overrides,
   };
 }
@@ -175,6 +179,12 @@ describe('checkPullRequest', () => {
   it('refuses a version that is not higher, or that differs from release.json', async () => {
     assert.match(await problems(release('1.0', crx('1.0'))), /must be higher/);
     assert.match(await problems(release('1.1', crx('1.2'))), /1\.2 in the manifest but 1\.1/);
+  });
+
+  it('refuses a .crx that differs from the SHA-256 in release.json', async () => {
+    const fake = release('1.1', crx('1.1'));
+    fake.downloads![crxUrl('v1.1')] = crx('1.1', { description: 'Swapped after review' });
+    assert.match(await problems(fake), /SHA-256 is [0-9a-f]{64}, but release\.json says/);
   });
 
   it('refuses a blocked extension', async () => {

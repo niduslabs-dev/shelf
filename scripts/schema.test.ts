@@ -4,7 +4,8 @@ import { describe, it } from 'node:test';
 import { parseClaim, parseListing, parseRelease, parseRepoUrl } from './schema.ts';
 
 const repo = { owner: 'alice', name: 'example' };
-const releaseWith = (crx: string) => parseRelease(JSON.stringify({ version: '1.0', crx }), repo);
+const releaseWith = (crx: string) =>
+  parseRelease(JSON.stringify({ version: '1.0', crx, sha256: 'a'.repeat(64) }), repo);
 
 describe('parseRelease', () => {
   it('accepts a release asset of the listing repo, matching case-insensitively', () => {
@@ -34,10 +35,18 @@ describe('parseRelease', () => {
     it(`refuses ${url}`, () => assert.equal(releaseWith(url).ok, false));
   }
 
+  it('refuses a malformed sha256', () => {
+    const crx = 'https://github.com/alice/example/releases/download/v1.0/example.crx';
+    assert.equal(
+      parseRelease(JSON.stringify({ version: '1.0', crx, sha256: 'A'.repeat(64) }), repo).ok,
+      false,
+    );
+  });
+
   it('refuses unknown fields and a missing version', () => {
     const result = parseRelease(JSON.stringify({ crx: 'x', extra: 1 }), repo);
     assert.ok(!result.ok);
-    assert.equal(result.problems.length, 3);
+    assert.equal(result.problems.length, 4);
   });
 });
 

@@ -16,11 +16,14 @@ scripts/
   schema.ts          listing.json, release.json, blocklist.json and authors' shelf.json claim files
   registry.ts        the registry's fixed URLs (update_url, stored .crx assets)
   github.ts          the GitHub REST calls and the capped .crx download, over fetch
+  verify-release.ts  the checks a downloaded .crx must pass against release.json (hash, signature, ID, manifest), shared by PR check and publish
   pr-check.ts        runs every PR check and renders the comment; pr-check.yml runs it
+  publish.ts         stores approved .crx files on Releases `<id>-<version>` and builds the site; publish.yml runs it, then deploys Pages
+  site.ts            the site's files: updates/<id>.xml, index.json, blocked.json, a placeholder index.html
   *.test.ts          tests: Helium-packed files, Chromium's own test files, crafted broken files and archives
   testing/           test-only writers (CRX3 and zip) for broken files
   fixtures/          .crx files: helium-* packed by Helium 0.21.1.1, chromium-* from Chromium's components/test/data/crx_file
-.github/workflows/   ci.yml (typecheck, lint, format, test), pr-check.yml (listing and release PRs)
+.github/workflows/   ci.yml (typecheck, lint, format, test), pr-check.yml (listing and release PRs), publish.yml (on main: store releases, deploy Pages)
 blocklist.json       blocked extension IDs
 extensions/<id>/     listing.json and release.json per extension (none yet)
 ```
@@ -41,5 +44,7 @@ pnpm format         # oxfmt (format:check in CI)
 - **Erasable TypeScript only** (`erasableSyntaxOnly`): Node runs the files directly, so no enums, namespaces or parameter properties.
 - **Security code changes need a test that fails without them.** When changing `crx3.ts`, compare with Chromium's `components/crx_file/crx_verifier.cc` and add a case.
 - **`update_url` is permanent.** Every listed extension has `https://shelf.niduslabs.dev/updates/<id>.xml` baked in. Never move or drop that path.
+- **Stored releases are never replaced.** Publish only creates Release `<id>-<version>` or compares it with release.json's SHA-256. A mismatch stops the deploy; a maintainer investigates by hand.
+- **The index page is a placeholder.** Its design goes on a canvas first (ask Jatin which), never straight into code.
 - **Fixture keys stay out of git.** The `.pem` files that made `helium-*` fixtures live in the workspace's `.claude/research/` folders.
 - **CI runs on GitHub's free runners** (public repo). Don't set `LINUX_RUNNER` to Blacksmith here; that would spend the shared Blacksmith minutes for nothing.

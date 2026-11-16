@@ -3,6 +3,7 @@
  * download for `.crx` files. No SDK, so nothing outside `node:` runs in CI.
  */
 const API = 'https://api.github.com';
+const UPLOADS = 'https://uploads.github.com';
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'shelf-registry-ci';
 const API_TIMEOUT_MS = 30_000;
@@ -116,6 +117,64 @@ export class GitHub {
       body: JSON.stringify({ body }),
     });
     if (!response.ok) throw new Error(`Posting the comment failed: ${response.status}`);
+  }
+  /** True when the repo has a published Release with this tag (drafts don't count). */
+  async hasRelease(repo: string, tag: string): Promise<boolean> {
+    const response = await this.#request(`/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`);
+    if (response.status === HTTP_NOT_FOUND) return false;
+    if (!response.ok) throw new Error(`GitHub release ${tag}: ${response.status}`);
+    return true;
+  }
+
+  /**
+   * Creates a Release with one asset: as a draft first, so a failed upload
+   * never leaves a published Release without its file, then published.
+   */
+  async createRelease(
+    repo: string,
+    release: { tag: string; target: string; name: string; body: string },
+    asset: { name: string; contentType: string; bytes: Uint8Array },
+  ): Promise<void> {
+    const created = await this.#request(`/repos/${repo}/releases`, {
+      method: 'POST',
+      body: JSON.stringify({
+        tag_name: release.tag,
+        target_commitish: release.target,
+        name: release.name,
+        body: release.body,
+        draft: true,
+        make_latest: 'false',
+      }),
+    });
+    if (!created.ok) throw new Error(`Creating release ${release.tag} failed: ${created.status}`);
+    const draft: unknown = await created.json();
+    const id =
+      typeof draft === 'object' && draft !== null && 'id' in draft ? Number(draft.id) : NaN;
+    if (!Number.isInteger(id)) throw new Error('Unexpected create release response');
+
+    const upload = await fetch(
+      `${UPLOADS}/repos/${repo}/releases/${id}/assets?name=${encodeURIComponent(asset.name)}`,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${this.#token}`,
+          'Content-Type': asset.contentType,
+          'User-Agent': USER_AGENT,
+          'X-GitHub-Api-Version': API_VERSION,
+        },
+        body: asset.bytes,
+        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      },
+    );
+    if (!upload.ok) throw new Error(`Uploading ${asset.name} failed: ${upload.status}`);
+
+    const published = await this.#request(`/repos/${repo}/releases/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ draft: false, make_latest: 'false' }),
+    });
+    if (!published.ok)
+      throw new Error(`Publishing release ${release.tag} failed: ${published.status}`);
   }
 }
 
