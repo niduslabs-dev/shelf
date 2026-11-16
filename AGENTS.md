@@ -77,5 +77,6 @@ pnpm format         # oxfmt (format:check in CI)
 - **Fixture keys stay out of git.** The `.pem` files that made `helium-*` fixtures live in the workspace's `.claude/research/` folders.
 - **The Cloudflare token lives only in the `production` environment,** which only `main` can deploy to. Never make it a repo secret or pass it to a job that a pull request can trigger.
 - **No challenges on this hostname.** Update checkers can't solve Cloudflare challenges, so Bot Fight Mode is off for the zone and a Configuration Rule turns Browser Integrity Check off here (see the workspace guide). publish.yml's live check prints Cloudflare's headers if a challenge (`cf-mitigated`) ever comes back.
+- **Pages make no third-party requests.** Manrope is self-hosted in `site/fonts/` (SIL OFL, licence alongside) and the CSP allows only `'self'`. Never add a CDN, analytics or remote font; it would break "Shelf keeps no record". After a deploy, Cloudflare's edge may serve the old HTML for up to 5 minutes.
 - **Worker logs stay off** (`observability` in wrangler.jsonc): Shelf keeps no record of who checks for updates.
 - **CI runs on GitHub's free runners** (public repo). Don't set `LINUX_RUNNER` to Blacksmith here; that would spend the shared Blacksmith minutes for nothing.
