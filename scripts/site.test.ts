@@ -135,11 +135,32 @@ describe('buildSite', () => {
     assert.equal(headers.match(/Cache-Control/g)?.length, 1);
   });
 
-  it('locks the pages down to their own script and styles, plus Google Fonts', () => {
+  it('locks the pages down to their own script, styles and fonts', () => {
     assert.match(
       text(files, '_headers'),
-      / {2}Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' https:\/\/fonts\.googleapis\.com; font-src https:\/\/fonts\.gstatic\.com; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'\n/,
+      / {2}Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'\n/,
     );
+  });
+
+  it('self-hosts Manrope, so no page view reaches a third party', () => {
+    for (const font of ['fonts/manrope-latin.woff2', 'fonts/manrope-latin-ext.woff2']) {
+      const bytes = files.get(font);
+      assert.ok(bytes instanceof Uint8Array, font);
+      assert.equal(Buffer.from(bytes.subarray(0, 4)).toString('latin1'), 'wOF2');
+    }
+    assert.match(text(files, 'fonts/OFL.txt'), /SIL Open Font License/);
+    assert.match(text(files, 'shelf.css'), /src: url\('\/fonts\/manrope-latin\.woff2'\)/);
+    for (const page of ['index.html', `e/${ID}/index.html`, '404.html']) {
+      assert.doesNotMatch(text(files, page), /googleapis|gstatic/);
+      assert.match(text(files, page), /rel="preload" href="\/fonts\/manrope-latin\.woff2"/);
+    }
+  });
+
+  it('has a 404 page in the store’s look', () => {
+    const page = text(files, '404.html');
+    assert.match(page, /That page isn't on Shelf\./);
+    assert.match(page, /<a class="btn btn-link" href="\/">Show all extensions<\/a>/);
+    assert.match(page, /<link rel="stylesheet" href="\/shelf\.css">/);
   });
 
   it('copies the store styles and script, and every page loads them from the root', () => {

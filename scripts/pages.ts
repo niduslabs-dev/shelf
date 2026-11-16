@@ -69,7 +69,6 @@ export function initial(name: string): string {
 
 const TEMPLATE_REPO = 'https://github.com/niduslabs-dev/shelf-extension-template';
 const SOURCE_REPO = `https://github.com/${REGISTRY_REPO}`;
-const FONTS = 'https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap';
 
 function head(title: string): string {
   return `<!doctype html>
@@ -79,9 +78,7 @@ function head(title: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#ffffff">
 <title>${title}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="${FONTS}" rel="stylesheet">
+<link rel="preload" href="/fonts/manrope-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/shelf.css">
 </head>
 <body>`;
@@ -135,6 +132,23 @@ const FOOTER_AND_DIALOG = `<footer>
 </body>
 </html>
 `;
+
+/** The page for any address Shelf doesn't have, served with a 404 status. */
+export function notFoundPage(): string {
+  return `${head('Not on Shelf')}
+<a class="skip" href="#main">Skip to the page</a>
+${BAR}
+
+<main class="wrap" id="main">
+  <div class="empty-search not-found">
+    <h1><strong>That page isn't on Shelf.</strong></h1>
+    <p>The address may be mistyped, or the extension may no longer be listed. Extensions Shelf has blocked are on the <a href="/blocked.json">blocked list</a>.</p>
+    <a class="btn btn-link" href="/">Show all extensions</a>
+  </div>
+</main>
+
+${FOOTER_AND_DIALOG}`;
+}
 
 /** One extension as the home page's script sees it. */
 export interface HomeItem {

@@ -8,7 +8,7 @@
   "assets": {
     "directory": "./_site",
     "html_handling": "drop-trailing-slash",
-    "not_found_handling": "none",
+    "not_found_handling": "404-page",
   },
   // Every listed extension's update_url lives here, so this domain never changes.
   "routes": [{ "pattern": "shelf.niduslabs.dev", "custom_domain": true }],

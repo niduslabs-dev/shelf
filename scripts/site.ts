@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { Manifest } from './manifest.ts';
-import { extensionPage, homePage } from './pages.ts';
+import { extensionPage, homePage, notFoundPage } from './pages.ts';
 import type { HomeItem, TrailRow } from './pages.ts';
 import { readPermissions } from './permissions.ts';
 import type { Permissions } from './permissions.ts';
@@ -95,12 +95,13 @@ export function updateXml(
  * for five minutes at most, so a block or a new release reaches browsers
  * quickly. `Cache-Control` is set once, under `/*`, because Cloudflare joins
  * the values of a header that two matching rules set. The CSP allows only
- * this site's own script and styles, plus Google Fonts for Manrope.
+ * this site's own script, styles and fonts. Manrope is self-hosted so no
+ * visit reaches a third party.
  */
 const HEADERS = `/*
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
-  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
   Cache-Control: public, max-age=300
 
 /updates/*
@@ -113,6 +114,9 @@ const HEADERS = `/*
 /** The browser files copied as they are: the store's styles and script. */
 const STATIC_DIR = join(import.meta.dirname, '..', 'site');
 const STATIC_ASSETS = ['shelf.css', 'shelf.js'];
+/** Manrope (SIL Open Font License, `site/fonts/OFL.txt`), Latin and Latin Extended. */
+const STATIC_BINARY = ['fonts/manrope-latin.woff2', 'fonts/manrope-latin-ext.woff2'];
+const STATIC_TEXT = ['fonts/OFL.txt'];
 /** `YYYY-MM-DD`, the date part of an ISO timestamp. */
 const ISO_DATE_LENGTH = 10;
 
@@ -191,8 +195,10 @@ export function buildSite(
   files.set('index.json', `${JSON.stringify(index, null, 2)}\n`);
   files.set('blocked.json', `${JSON.stringify(lists.blocklist, null, 2)}\n`);
   files.set('index.html', homePage(homeItems(index)));
-  for (const asset of STATIC_ASSETS)
+  for (const asset of [...STATIC_ASSETS, ...STATIC_TEXT])
     files.set(asset, readFileSync(join(STATIC_DIR, asset), 'utf8'));
+  for (const asset of STATIC_BINARY) files.set(asset, readFileSync(join(STATIC_DIR, asset)));
+  files.set('404.html', notFoundPage());
   files.set('_headers', HEADERS);
   return files;
 }
