@@ -1,0 +1,42 @@
+# Type-checks, lints, formats and tests on each push to main and on pull
+# requests; commits that only touch docs (Markdown, docs/) skip it.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  checks:
+    name: Check
+    # `vars.LINUX_RUNNER` (a label or a JSON array) when set, else GitHub's Ubuntu.
+    runs-on: >-
+      ${{ fromJSON(startsWith(vars.LINUX_RUNNER, '[') && vars.LINUX_RUNNER
+      || format('"{0}"', vars.LINUX_RUNNER || 'ubuntu-latest')) }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Format
+        run: pnpm format:check
+      - name: Test
+        run: pnpm test
