@@ -116,7 +116,7 @@ const FOOTER_AND_DIALOG = `<footer>
     <p>Helium only installs from outside its own store once you switch this on. It takes a minute, once.</p>
     <ol class="steps">
       <li>Paste this into the address bar.
-        <div class="copy-row"><code id="flag" translate="no" tabindex="0">chrome://flags/#extension-mime-request-handling</code><button class="btn" type="button" id="copy" autofocus>Copy</button></div>
+        <div class="copy-row"><code id="flag" translate="no">chrome://flags/<wbr>#extension-mime-request-handling</code><button class="btn" type="button" id="copy" autofocus>Copy</button></div>
         <span class="visually-hidden" id="copy-status" role="status"></span>
       </li>
       <li>Set it to <strong>Always prompt for install</strong>, then relaunch Helium.</li>
