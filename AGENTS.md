@@ -49,5 +49,6 @@ pnpm format         # oxfmt (format:check in CI)
 - **The index page is a placeholder.** Its design goes on a canvas first (ask Jatin which), never straight into code.
 - **Fixture keys stay out of git.** The `.pem` files that made `helium-*` fixtures live in the workspace's `.claude/research/` folders.
 - **The Cloudflare token lives only in the `production` environment,** which only `main` can deploy to. Never make it a repo secret or pass it to a job that a pull request can trigger.
+- **No challenges on this hostname.** Update checkers can't solve Cloudflare challenges, so Bot Fight Mode is off for the zone and a Configuration Rule turns Browser Integrity Check off here (see the workspace guide). publish.yml's live check prints Cloudflare's headers if a challenge (`cf-mitigated`) ever comes back.
 - **Worker logs stay off** (`observability` in wrangler.jsonc): Shelf keeps no record of who checks for updates.
 - **CI runs on GitHub's free runners** (public repo). Don't set `LINUX_RUNNER` to Blacksmith here; that would spend the shared Blacksmith minutes for nothing.
