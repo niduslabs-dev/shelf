@@ -1,6 +1,6 @@
 # How Shelf reviews extensions
 
-Every new listing, and every release that a person reviews, is checked against this page. The automatic checks (signature, ID, manifest, permissions) run first. This page covers what a person looks at.
+Every new listing, and every release that a person reviews, is checked against this page. A maintainer can still look at any release after it's merged, and block it. The automatic checks (signature, ID, manifest, permissions) run first. This page covers what a person looks at.
 
 A reviewer can ask questions on the pull request. Answer there; a release can be updated by pushing to the same branch.
 
@@ -24,7 +24,8 @@ A reviewer can ask questions on the pull request. Answer there; a release can be
 ## How reviews work
 
 - **New listings** are always reviewed by a person.
-- **Releases** are reviewed by a person too. Shelf may later merge releases automatically when they add no permissions and change nothing else in the manifest; the pull request comment says when that applies.
+- **Releases that add no permissions** and change nothing else in the manifest are merged automatically once every check passes. The checks still verify the signature, the ID, the manifest and the exact file. The pull request comment says when this applies.
+- **Every other release** is reviewed by a person: one that adds permissions, changes other manifest keys, or moves the extension off Shelf.
 - **New permissions** get a closer look. Say in the pull request why the release needs them.
 - **Decisions** are explained on the pull request. If a listing is refused, the comment says why and what would change the answer.
 

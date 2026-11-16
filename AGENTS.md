@@ -65,7 +65,7 @@ pnpm format         # oxfmt (format:check in CI)
 
 ## Auto-merge (off by default)
 
-Every PR is reviewed by hand unless the repo variable `SHELF_AUTO_MERGE` is `true`. Turn it on with `gh variable set SHELF_AUTO_MERGE --body true -R niduslabs-dev/shelf`; delete the variable (`gh variable delete SHELF_AUTO_MERGE -R niduslabs-dev/shelf`) to turn it off.
+Auto-merge is **on** (`SHELF_AUTO_MERGE=true` since 2026-11-16). Every PR it doesn't cover is reviewed by hand; with the variable unset, all of them are. Turn it on with `gh variable set SHELF_AUTO_MERGE --body true -R niduslabs-dev/shelf`; delete the variable (`gh variable delete SHELF_AUTO_MERGE -R niduslabs-dev/shelf`) to turn it off.
 
 - **What it merges** (`autoMergeVerdict` in pr-check.ts): a release, not a new listing, of a listed extension (not blocked, removed or left, so never a final release), into `main`, by a publisher in its `shelf.json`, changing only `extensions/<id>/release.json`, with every check passed, no added permissions, host permissions, optional permissions or content-script matches, and no other manifest key changed. The PR comment says "Eligible for auto-merge" or "Reviewed by hand: <reasons>", and links REVIEW.md.
 - **How:** pr-check.yml uploads `verdict.json` (`{ pr, headSha, eligible, reasons }`, kept one day). auto-merge.yml runs on `workflow_run` after a successful PR check that was a `pull_request_target` run of pr-check.yml, reads the verdict with auto-merge.ts, re-reads the live PR (open, into `main`, same head commit, still one release.json), squash-merges with `--match-head-commit`, then dispatches Publish, since merges made with `GITHUB_TOKEN` start no push workflows.
