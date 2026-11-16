@@ -1,0 +1,42 @@
+name: Report a problem with an extension
+description: Something wrong with a listed extension, other than a security issue.
+title: "Problem with "
+labels: ["report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems (malware, a leaked signing key, data theft) go privately through [SECURITY.md](https://github.com/niduslabs-dev/shelf/blob/main/SECURITY.md), not here.
+  - type: input
+    id: extension
+    attributes:
+      label: Extension
+      description: Its Shelf page or its 32-letter ID.
+      placeholder: https://shelf.niduslabs.dev/e/...
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of problem?
+      options:
+        - It doesn't do what its listing says
+        - It asks for more access than it needs
+        - It shows ads or changes pages it shouldn't
+        - Its listing copies another extension or company
+        - It's broken or won't install
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: What happened
+      description: What you saw, and how to see it again if you can.
+    validations:
+      required: true
+  - type: input
+    id: helium
+    attributes:
+      label: Browser and version
+      placeholder: Helium 0.21.1.1
