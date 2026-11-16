@@ -17,6 +17,10 @@ scripts/
   standing.ts        an ID's state: listed, blocked, removed or left
   registry.ts        the registry's fixed URLs (update_url, stored .crx assets)
   github.ts          the GitHub REST calls and the capped .crx download, over fetch
+  zip-write.ts       deterministic zip writer (sorted entries, fixed timestamps, deflate)
+  crx3-write.ts      CRX3 writer: one RSA proof, signed_header_data holding the crx_id
+  pack.ts            packs an author's folder into a signed .crx: skips dotfiles, refuses .pem/.key files, checks MV3 and update_url, then runs verifyRelease on the result
+  release-action.ts  the publish Action's steps: `pack` and `summary` (release.json, draft listing.json, links that open the Shelf PR)
   verify-release.ts  the checks a downloaded .crx must pass against release.json (hash, signature, ID, manifest), shared by PR check and publish
   pr-check.ts        runs every PR check and renders the comment; pr-check.yml runs it
   publish.ts         stores approved .crx files on Releases `<id>-<version>` and builds the site into _site/; publish.yml runs it, then deploys
@@ -24,6 +28,7 @@ scripts/
   *.test.ts          tests: Helium-packed files, Chromium's own test files, crafted broken files and archives
   testing/           test-only writers (CRX3 and zip) for broken files
   fixtures/          .crx files: helium-* packed by Helium 0.21.1.1, chromium-* from Chromium's components/test/data/crx_file
+actions/publish/     the authors' publish Action (composite): pack and sign, GitHub Release `v<version>`, job summary with the PR links
 wrangler.jsonc       Worker `shelf`: serves _site/ at shelf.niduslabs.dev (custom domain; Wrangler made the DNS record)
 .github/workflows/   ci.yml (typecheck, lint, format, test), pr-check.yml (listing and release PRs), publish.yml (on main: store releases, build, deploy with Wrangler)
 blocklist.json       blocked extension IDs (update file answers "no update")
@@ -50,6 +55,8 @@ pnpm format         # oxfmt (format:check in CI)
 - **Leaving:** a maintainer adds a `left` entry first; then the author's final release PR may move `update_url` to their own https URL, once. Keep `extensions/<id>/` with that final release.
 - **Stored releases are never replaced.** Publish only creates Release `<id>-<version>` or compares it with release.json's SHA-256. A mismatch stops the deploy; a maintainer investigates by hand.
 - **The index page is a placeholder.** Its design goes on a canvas first (ask Jatin which), never straight into code.
+- **The publish Action never holds a Shelf token.** It runs in authors' repos, creates their Release with their `GITHUB_TOKEN`, and ends with a job summary whose links open the Shelf PR in the browser. Authors pin it to a full commit SHA (`niduslabs-dev/shelf/actions/publish@<sha>`), so a change only reaches them when they bump it; the template repo `niduslabs-dev/shelf-extension-template` pins the current one. Third-party actions inside it are pinned by SHA too, since its steps see the author's signing key.
+- **The signing key never touches disk.** `pack.ts` reads it from `SHELF_SIGNING_KEY` into memory, and its errors never quote it.
 - **Fixture keys stay out of git.** The `.pem` files that made `helium-*` fixtures live in the workspace's `.claude/research/` folders.
 - **The Cloudflare token lives only in the `production` environment,** which only `main` can deploy to. Never make it a repo secret or pass it to a job that a pull request can trigger.
 - **No challenges on this hostname.** Update checkers can't solve Cloudflare challenges, so Bot Fight Mode is off for the zone and a Configuration Rule turns Browser Integrity Check off here (see the workspace guide). publish.yml's live check prints Cloudflare's headers if a challenge (`cf-mitigated`) ever comes back.

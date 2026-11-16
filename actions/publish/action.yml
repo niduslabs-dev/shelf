@@ -1,0 +1,82 @@
+# Publishes a release of a Chromium extension to Shelf, from the author's own
+# repo. Use it pinned to a full commit SHA:
+#
+#   - uses: niduslabs-dev/shelf/actions/publish@<commit SHA>
+#     with:
+#       path: extension
+#       signing-key: ${{ secrets.SHELF_SIGNING_KEY }}
+#
+# It packs and signs the folder into a deterministic CRX3 (the key never
+# touches disk), checks it with Shelf's own release checks, creates GitHub
+# Release `v<version>` with the .crx attached, and writes a job summary with
+# release.json and links that open the Shelf pull request in the browser. It
+# never holds a token for Shelf. The job needs `permissions: contents: write`.
+#
+# It runs Shelf's scripts from this checkout of the action: node: modules
+# only, nothing installed.
+name: Publish to Shelf
+description: Pack, sign and release a Chromium extension, then open its Shelf pull request from the job summary.
+author: Nidus Labs
+inputs:
+  path:
+    description: The extension folder (the one holding manifest.json). Dotfiles are left out.
+    default: '.'
+  signing-key:
+    description: The PEM RSA private key the extension ID comes from. Defaults to the SHELF_SIGNING_KEY environment variable.
+    default: ''
+  github-token:
+    description: A token that can create Releases in this repo.
+    default: ${{ github.token }}
+outputs:
+  id:
+    description: The extension ID.
+    value: ${{ steps.pack.outputs.id }}
+  version:
+    description: The version released.
+    value: ${{ steps.pack.outputs.version }}
+  crx-url:
+    description: The .crx asset's download URL, as release.json's `crx`.
+    value: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.pack.outputs.tag }}/${{ steps.pack.outputs.asset }}
+  sha256:
+    description: The .crx's SHA-256, as release.json's `sha256`.
+    value: ${{ steps.pack.outputs.sha256 }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: '24'
+        package-manager-cache: false
+    - name: Pack and sign
+      id: pack
+      shell: bash
+      env:
+        SHELF_SIGNING_KEY: ${{ inputs.signing-key || env.SHELF_SIGNING_KEY }}
+        SHELF_PATH: ${{ inputs.path }}
+      run: node "$GITHUB_ACTION_PATH/../../scripts/release-action.ts" pack
+    - name: Create the GitHub Release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        TAG: ${{ steps.pack.outputs.tag }}
+        VERSION: ${{ steps.pack.outputs.version }}
+        FILE: ${{ steps.pack.outputs.file }}
+        SHA256: ${{ steps.pack.outputs.sha256 }}
+      run: |
+        if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --silent 2>/dev/null; then
+          echo "::error::Tag $TAG already exists. Bump \"version\" in manifest.json, or delete the tag if that release never shipped."
+          exit 1
+        fi
+        gh release create "$TAG" "$FILE" \
+          --repo "$GITHUB_REPOSITORY" \
+          --target "$GITHUB_SHA" \
+          --title "$VERSION" \
+          --notes "Signed for Shelf. SHA-256: \`$SHA256\`"
+    - name: Write the Shelf pull request summary
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        SHELF_ID: ${{ steps.pack.outputs.id }}
+        SHELF_VERSION: ${{ steps.pack.outputs.version }}
+        SHELF_FILE: ${{ steps.pack.outputs.file }}
+      run: node "$GITHUB_ACTION_PATH/../../scripts/release-action.ts" summary
