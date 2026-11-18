@@ -1,4 +1,4 @@
-# Checks listing and release pull requests (plans/shelf.md, "Checks on every
+# Checks listing and release pull requests (studio/shelf/plan.md, "Checks on every
 # PR") and posts the results as one comment, updated on each push.
 #
 # Security: this runs under `pull_request_target`, so it has a token that can
